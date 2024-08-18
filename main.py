@@ -24,20 +24,24 @@ def get_water_temperature():
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
         try:
-            # Находим элемент по пути /html/body/center/div[1]/div[5]/div[1]/p[2]/strong
+            # Поиск элемента /html/body/center/div[1]/div[5]/div[1]/p[2]/strong
             center_element = soup.find('center')
-            div1 = center_element.find_all('div')[0]
-            div5 = div1.find_all('div')[4]
-            div1_inner = div5.find_all('div')[0]
-            p2 = div1_inner.find_all('p')[1]
-            strong_element = p2.find('strong')
+            if center_element:
+                div1 = center_element.find_all('div')[0]
+                div5 = div1.find_all('div')[4]
+                div1_inner = div5.find_all('div')[0]
+                p2 = div1_inner.find_all('p')[1]
+                strong_element = p2.find('strong')
 
-            if strong_element:
-                temp_text = strong_element.text
-                temperature = float(temp_text.split()[-1].replace('°C', '').strip())
-                return temperature
+                if strong_element:
+                    temp_text = strong_element.text
+                    temperature = float(temp_text.split()[-1].replace('°C', '').strip())
+                    return temperature
+                else:
+                    print("Ошибка: Не удалось найти элемент <strong> с температурой.")
+                    return None
             else:
-                print("Ошибка: Не удалось найти элемент <strong> с температурой.")
+                print("Ошибка: Не удалось найти элемент <center>.")
                 return None
         except (AttributeError, IndexError) as e:
             print("Ошибка: Проблема с нахождением элемента по пути.", e)
