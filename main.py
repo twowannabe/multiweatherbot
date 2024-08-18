@@ -29,11 +29,16 @@ def get_water_temperature():
             print(f"Найдено {len(div_elements)} <div> элементов с классом 'x5'")
 
             for div in div_elements:
+                print("Содержимое <div> с классом 'x5':")
+                print(div.prettify())  # Выводим структуру содержимого div для анализа
+
                 strong_element = div.find('strong')
-                if strong_element and 'Water temperature in Budva today is' in strong_element.text:
-                    temp_text = strong_element.text
-                    temperature = float(temp_text.split()[-1].replace('°C', '').strip())
-                    return temperature
+                if strong_element:
+                    print(f"Найден элемент <strong>: {strong_element.text}")
+                    if 'Water temperature in Budva today is' in strong_element.text:
+                        temp_text = strong_element.text
+                        temperature = float(temp_text.split()[-1].replace('°C', '').strip())
+                        return temperature
 
             print("Ошибка: Не удалось найти элемент <strong> с температурой.")
             return None
