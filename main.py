@@ -24,36 +24,20 @@ def get_water_temperature():
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
         try:
-            # Поиск заголовка <h3> с текстом "Budva water temperature now"
-            h3_element = soup.find('h3', string="Budva water temperature now")
-            if h3_element:
-                print("Найден заголовок <h3> 'Budva water temperature now'")
+            # Поиск всех <strong> по всему документу
+            strong_elements = soup.find_all('strong')
+            for element in strong_elements:
+                text = element.get_text(strip=True)
+                if 'Water temperature in Budva today is' in text:
+                    print(f"Найден текст с температурой: {text}")
+                    temp_text = text.split()[-1]
+                    temperature = float(temp_text.replace('°C', '').strip())
+                    return temperature
 
-                # Ищем следующий элемент после заголовка
-                next_sibling = h3_element.find_next_sibling('div')
-                if next_sibling:
-                    print("Найден следующий элемент <div> после <h3>")
-
-                    # Вывод всего текста внутри этого блока
-                    all_text = next_sibling.get_text(separator="\n", strip=True)
-                    print("Текст внутри <div> после <h3>:\n", all_text)
-
-                    # Теперь пробуем найти строку с температурой
-                    for line in all_text.splitlines():
-                        if 'Water temperature in Budva today is' in line:
-                            temp_text = line.split()[-1]
-                            temperature = float(temp_text.replace('°C', '').strip())
-                            return temperature
-                    print("Ошибка: Не удалось найти строку с температурой.")
-                    return None
-                else:
-                    print("Ошибка: Не удалось найти следующий элемент после <h3>.")
-                    return None
-            else:
-                print("Ошибка: Не удалось найти заголовок <h3> 'Budva water temperature now'.")
-                return None
+            print("Ошибка: Не удалось найти строку с температурой.")
+            return None
         except Exception as e:
-            print("Ошибка: Проблема с нахождением элемента по пути.", e)
+            print("Ошибка: Проблема с нахождением элемента.", e)
             return None
     else:
         print(f"Ошибка: Не удалось получить данные (статус код {response.status_code})")
