@@ -33,14 +33,19 @@ def get_water_temperature():
                 next_sibling = h3_element.find_next_sibling('div')
                 if next_sibling:
                     print("Найден следующий элемент <div> после <h3>")
-                    strong_element = next_sibling.find('strong')
-                    if strong_element:
-                        temp_text = strong_element.text
-                        temperature = float(temp_text.split()[-1].replace('°C', '').strip())
-                        return temperature
-                    else:
-                        print("Ошибка: Не удалось найти элемент <strong> с температурой.")
-                        return None
+
+                    # Вывод всего текста внутри этого блока
+                    all_text = next_sibling.get_text(separator="\n", strip=True)
+                    print("Текст внутри <div> после <h3>:\n", all_text)
+
+                    # Теперь пробуем найти строку с температурой
+                    for line in all_text.splitlines():
+                        if 'Water temperature in Budva today is' in line:
+                            temp_text = line.split()[-1]
+                            temperature = float(temp_text.replace('°C', '').strip())
+                            return temperature
+                    print("Ошибка: Не удалось найти строку с температурой.")
+                    return None
                 else:
                     print("Ошибка: Не удалось найти следующий элемент после <h3>.")
                     return None
