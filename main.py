@@ -23,11 +23,18 @@ def get_water_temperature():
     response = requests.get(url)
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
-        temp_text = soup.find(text='Water temperature in Budva today is').find_next().text
-        temperature = float(temp_text.replace('°C', '').strip())
-        return temperature
+        # Попробуем найти тег <strong> с текстом, содержащим температуру
+        temp_element = soup.find('strong', text=lambda x: x and 'Water temperature in Budva today is' in x)
+        if temp_element:
+            # Извлекаем только число с температурой
+            temp_text = temp_element.text
+            temperature = float(temp_text.split()[-1].replace('°C', '').strip())
+            return temperature
+        else:
+            print("Ошибка: Не удалось найти элемент с температурой на странице.")
+            return None
     else:
-        print(f"Error: Unable to fetch data (status code {response.status_code})")
+        print(f"Ошибка: Не удалось получить данные (статус код {response.status_code})")
         return None
 
 # Function to check temperature and send a message
