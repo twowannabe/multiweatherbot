@@ -24,58 +24,20 @@ def get_water_temperature():
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
         try:
-            # Шаг 1: Найти элемент <center>
-            center_element = soup.find('center')
-            if center_element:
-                print("Нашли элемент <center>")
+            # Поиск всех <div> с классом 'x5'
+            div_elements = soup.find_all('div', class_='x5')
+            print(f"Найдено {len(div_elements)} <div> элементов с классом 'x5'")
 
-                # Шаг 2: Найти первый <div> внутри <center>
-                div1 = center_element.find_all('div')
-                if len(div1) > 0:
-                    print(f"Нашли {len(div1)} <div> внутри <center>")
+            for div in div_elements:
+                strong_element = div.find('strong')
+                if strong_element and 'Water temperature in Budva today is' in strong_element.text:
+                    temp_text = strong_element.text
+                    temperature = float(temp_text.split()[-1].replace('°C', '').strip())
+                    return temperature
 
-                    # Шаг 3: Найти пятый <div> внутри первого <div>
-                    div5 = div1[0].find_all('div')
-                    if len(div5) > 4:
-                        print(f"Нашли {len(div5)} <div> внутри первого <div>")
-
-                        # Шаг 4: Найти первый <div> внутри пятого <div>
-                        div1_inner = div5[4].find_all('div')
-                        if len(div1_inner) > 0:
-                            print(f"Нашли {len(div1_inner)} <div> внутри пятого <div>")
-
-                            # Шаг 5: Найти второй <p> внутри этого <div>
-                            p2 = div1_inner[0].find_all('p')
-                            if len(p2) > 1:
-                                print(f"Нашли {len(p2)} <p> внутри первого внутреннего <div>")
-
-                                # Шаг 6: Найти <strong> внутри второго <p>
-                                strong_element = p2[1].find('strong')
-                                if strong_element:
-                                    print("Нашли элемент <strong> с температурой")
-
-                                    temp_text = strong_element.text
-                                    temperature = float(temp_text.split()[-1].replace('°C', '').strip())
-                                    return temperature
-                                else:
-                                    print("Ошибка: Не удалось найти элемент <strong> с температурой.")
-                                    return None
-                            else:
-                                print("Ошибка: Не удалось найти второй <p> внутри первого внутреннего <div>.")
-                                return None
-                        else:
-                            print("Ошибка: Не удалось найти первый внутренний <div> внутри пятого <div>.")
-                            return None
-                    else:
-                        print("Ошибка: Не удалось найти пятый <div> внутри первого <div>.")
-                        return None
-                else:
-                    print("Ошибка: Не удалось найти первый <div> внутри <center>.")
-                    return None
-            else:
-                print("Ошибка: Не удалось найти элемент <center>.")
-                return None
-        except (AttributeError, IndexError) as e:
+            print("Ошибка: Не удалось найти элемент <strong> с температурой.")
+            return None
+        except Exception as e:
             print("Ошибка: Проблема с нахождением элемента по пути.", e)
             return None
     else:
