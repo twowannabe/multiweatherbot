@@ -23,21 +23,24 @@ def get_water_temperature():
     response = requests.get(url)
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
-        # Поиск div с классом x5
-        div_element = soup.find('div', class_='x5')
-        if div_element:
-            # Поиск тега strong внутри этого div
-            temp_element = div_element.find('strong')
-            if temp_element:
-                # Извлечение температуры
-                temp_text = temp_element.text
+        try:
+            # Находим элемент по пути /html/body/center/div[1]/div[5]/div[1]/p[2]/strong
+            center_element = soup.find('center')
+            div1 = center_element.find_all('div')[0]
+            div5 = div1.find_all('div')[4]
+            div1_inner = div5.find_all('div')[0]
+            p2 = div1_inner.find_all('p')[1]
+            strong_element = p2.find('strong')
+
+            if strong_element:
+                temp_text = strong_element.text
                 temperature = float(temp_text.split()[-1].replace('°C', '').strip())
                 return temperature
             else:
-                print("Ошибка: Не удалось найти элемент с температурой внутри div.")
+                print("Ошибка: Не удалось найти элемент <strong> с температурой.")
                 return None
-        else:
-            print("Ошибка: Не удалось найти div с классом x5.")
+        except (AttributeError, IndexError) as e:
+            print("Ошибка: Проблема с нахождением элемента по пути.", e)
             return None
     else:
         print(f"Ошибка: Не удалось получить данные (статус код {response.status_code})")
