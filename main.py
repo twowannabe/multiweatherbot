@@ -7,6 +7,7 @@ from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters
 import threading
 import openai
+import re
 
 # Загрузка ключей из .env файла
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -32,7 +33,11 @@ logger = logging.getLogger(__name__)
 chat_location = {}
 monitoring_chats = {}
 
-# Функция для получения температуры воздуха
+# Функция для экранирования текста в формате MarkdownV2
+def escape_markdown_v2(text):
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+
+# Функция для получения текущей температуры воздуха
 def get_temperature(lat, lon):
     logger.info("Получаем температуру для координат: (%s, %s)", lat, lon)
     url = f'http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric'
@@ -51,24 +56,47 @@ def get_temperature(lat, lon):
         logger.error("Ошибка при получении данных: %s", response.status_code)
         return None
 
+# Функция для получения прогноза на следующие 12 часов
+def get_forecast(lat, lon):
+    logger.info("Получаем прогноз на следующие 12 часов для координат: (%s, %s)", lat, lon)
+    url = f'http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric'
+    response = requests.get(url)
+    data = response.json()
+
+    if response.status_code == 200:
+        forecast = []
+        for entry in data['list'][:4]:  # Получаем данные за ближайшие 12 часов (4 временных периода по 3 часа)
+            time_period = entry['dt_txt']
+            temp = entry['main']['temp']
+            forecast.append(f"{time_period}: {temp}°C")
+        logger.info("Прогноз на следующие 12 часов: %s", forecast)
+        return forecast
+    else:
+        logger.error("Ошибка при получении прогноза: %s", response.status_code)
+        return None
+
 # Функция для генерации шуточного прогноза с помощью OpenAI API
-def generate_funny_forecast_with_openai(temp):
-    logger.info("Генерация шуточного прогноза через OpenAI для температуры: %s°C", temp)
-    prompt = f"Создай шуточный прогноз погоды для температуры {temp}°C в Черногории. Учти, что большую часть года температура здесь колеблется от 10 до 40°C."
+def generate_funny_forecast_with_openai(forecast):
+    logger.info("Генерация шуточного прогноза через OpenAI для прогноза на 12 часов")
+    forecast_text = "\n".join(forecast)
+    messages = [
+        {"role": "system", "content": "Ты — синоптик, который делает смешные прогнозы погоды."},
+        {"role": "user", "content": f"Создай шуточный прогноз погоды на следующие 12 часов: \n{forecast_text}. Добавь немного юмора и эмодзи."}
+    ]
 
     try:
-        response = openai.Completion.create(
-            engine="gpt-4o",
-            prompt=prompt,
-            max_tokens=50,
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=100,
             temperature=0.7
         )
-        forecast = response.choices[0].text.strip()
+        forecast = response['choices'][0]['message']['content'].strip()
         logger.info("Сгенерированный прогноз: %s", forecast)
         return forecast
     except Exception as e:
         logger.error("Ошибка при генерации прогноза через OpenAI: %s", str(e))
-        return "Прогноз не удалось создать, но я уверен, что погода будет интересной!"
+        return "Прогноз не удалось создать, но я уверен, что погода будет интересной! 😄"
 
 # Функция для отправки утреннего прогноза
 def send_morning_forecast():
@@ -76,20 +104,22 @@ def send_morning_forecast():
     for chat_id, (lat, lon) in monitoring_chats.items():
         temp = get_temperature(lat, lon)
         if temp is not None:
-            forecast = generate_funny_forecast_with_openai(temp)
-            bot.send_message(chat_id=chat_id, text=f"Доброе утро! Текущая температура: {temp}°C\n{forecast}")
+            forecast = generate_funny_forecast_with_openai([f"Текущая температура: **{temp}°C**"])
+            forecast = escape_markdown_v2(forecast)  # Экранирование текста
+            bot.send_message(chat_id=chat_id, text=forecast, parse_mode="MarkdownV2")
 
 # Функция для отправки прогноза по команде /forecast
 def send_forecast(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     if chat_id in chat_location:
         lat, lon = chat_location[chat_id]
-        temp = get_temperature(lat, lon)
-        if temp is not None:
-            forecast = generate_funny_forecast_with_openai(temp)
-            update.message.reply_text(f"Текущая температура: {temp}°C\n{forecast}")
+        forecast_data = get_forecast(lat, lon)
+        if forecast_data is not None:
+            forecast = generate_funny_forecast_with_openai(forecast_data)
+            forecast = escape_markdown_v2(forecast)  # Экранирование текста
+            update.message.reply_text(forecast, parse_mode="MarkdownV2")
         else:
-            update.message.reply_text("Не удалось получить данные о температуре.")
+            update.message.reply_text("Не удалось получить данные о прогнозе.")
     else:
         update.message.reply_text("Локация не была отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
