@@ -22,7 +22,7 @@ last_temp = None
 
 # Функция для получения температуры воды
 def get_sea_temperature():
-    response = requests.get(URL)
+    response = requests.get(URL, verify=False)  # Игнорирование проверки сертификата
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
         temp_element = soup.find('div', id='sea-temperature').find('span')
