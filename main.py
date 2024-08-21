@@ -81,14 +81,14 @@ def generate_funny_forecast_with_openai(forecast):
     forecast_text = "\n".join(forecast)
     messages = [
         {"role": "system", "content": "Ты — синоптик, который делает смешные прогнозы погоды."},
-        {"role": "user", "content": f"Создай шуточный прогноз погоды на следующие 12 часов: \n{forecast_text}. Добавь немного юмора и эмодзи."}
+        {"role": "user", "content": f"Создай шуточный прогноз погоды на следующие 12 часов: \n{forecast_text}. Пожалуйста, завершай свои предложения и добавь немного юмора и эмодзи."}
     ]
 
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            max_tokens=100,  # Ограничиваем длину ответа до 100 токенов
+            max_tokens=150,  # Увеличиваем длину ответа до 150 токенов
             temperature=0.7
         )
         forecast = response['choices'][0]['message']['content'].strip()
@@ -105,19 +105,22 @@ def send_morning_forecast():
         temp = get_temperature(lat, lon)
         if temp is not None:
             forecast = generate_funny_forecast_with_openai([f"Текущая температура: **{temp}°C**"])
-            forecast = escape_markdown_v2(forecast)  # Экранирование текста
-            bot.send_message(chat_id=chat_id, text=forecast, parse_mode="MarkdownV2")
+            forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
+            forecast_message = escape_markdown_v2(forecast_message)  # Экранирование текста
+            bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="MarkdownV2")
 
 # Функция для отправки прогноза по команде /forecast
 def send_forecast(update: Update, context: CallbackContext):
     chat_id = update.message.chat_id
     if chat_id in chat_location:
         lat, lon = chat_location[chat_id]
+        temp = get_temperature(lat, lon)
         forecast_data = get_forecast(lat, lon)
         if forecast_data is not None:
             forecast = generate_funny_forecast_with_openai(forecast_data)
-            forecast = escape_markdown_v2(forecast)  # Экранирование текста
-            update.message.reply_text(forecast, parse_mode="MarkdownV2")
+            forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
+            forecast_message = escape_markdown_v2(forecast_message)  # Экранирование текста
+            update.message.reply_text(forecast_message, parse_mode="MarkdownV2")
         else:
             update.message.reply_text("Не удалось получить данные о прогнозе.")
     else:
