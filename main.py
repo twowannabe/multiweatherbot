@@ -88,7 +88,7 @@ def generate_funny_forecast_with_openai(forecast):
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            max_tokens=70,  # Увеличиваем длину ответа до 150 токенов
+            max_tokens=200,  # Увеличиваем длину ответа до 150 токенов
             temperature=0.5
         )
         forecast = response['choices'][0]['message']['content'].strip()
