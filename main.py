@@ -55,7 +55,7 @@ def send_hourly_forecast():
             if temp is not None:
                 forecast = generate_funny_forecast(temp)
                 bot.send_message(chat_id=chat_id, text=f"Текущая температура: {temp}°C\n{forecast}")
-        sleep(3600)  # Отправка прогноза каждые 60 минут
+        sleep(360)  # Отправка прогноза каждые 60 минут
 
 # Функция для обработки команды /start
 def start(update: Update, context: CallbackContext):
