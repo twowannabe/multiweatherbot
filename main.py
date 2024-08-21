@@ -46,7 +46,7 @@ def check_temperature():
         if last_temp is None:
             last_temp = current_temp
         if current_temp != last_temp:
-            bot.send_message(chat_id=chat_id, text=f"Температура воды изменилась: сейчас {current_temp}°C")
+            bot.send_message(chat_id=chat_id, text=f"Температура воды изменилась: {current_temp}°C")
             last_temp = current_temp
 
 # Функция для обработки команды /start
@@ -62,9 +62,19 @@ def temperature_monitor():
         check_temperature()
         sleep(3600)  # Проверка каждые 60 минут
 
-# Настройка обработчика команды /start
+# Функция для обработки команды /temp
+def temp(update: Update, context: CallbackContext):
+    current_temp = get_sea_temperature()
+    if current_temp:
+        update.message.reply_text(f"Текущая температура воды: {current_temp}°C")
+    else:
+        update.message.reply_text("Не удалось получить текущую температуру воды.")
+
+# Настройка обработчиков команд
 start_handler = CommandHandler('start', start)
+temp_handler = CommandHandler('temp', temp)
 updater.dispatcher.add_handler(start_handler)
+updater.dispatcher.add_handler(temp_handler)
 
 # Запуск бота
 updater.start_polling()
