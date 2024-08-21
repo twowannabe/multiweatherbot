@@ -1,4 +1,5 @@
 import requests
+from bs4 import BeautifulSoup
 from decouple import config
 from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
@@ -7,11 +8,9 @@ import threading
 
 # Загрузка ключей из .env файла
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
-API_KEY = config('OPENWEATHERMAP_API_KEY')
 
-# Установите координаты для Будвы
-LAT = '42.28035359615054'
-LON = '18.875357276170174'
+# URL страницы с температурой воды
+URL = 'https://seatemperature.org/europe/montenegro/budva.htm'
 
 # Инициализация бота
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -23,16 +22,16 @@ last_temp = None
 
 # Функция для получения температуры воды
 def get_sea_temperature():
-    url = f'http://api.openweathermap.org/data/2.5/weather?lat={LAT}&lon={LON}&appid={API_KEY}&units=metric'
-    response = requests.get(url)
-    data = response.json()
-
+    response = requests.get(URL)
     if response.status_code == 200:
-        if 'main' in data and 'temp' in data['main']:
-            sea_temp = data['main']['temp']
+        soup = BeautifulSoup(response.text, 'html.parser')
+        temp_element = soup.find('div', id='sea-temperature').find('span')
+        if temp_element:
+            temp_text = temp_element.text.split('°')[0]  # Извлекаем температуру до символа '°'
+            sea_temp = float(temp_text)
             return sea_temp
         else:
-            print("Не удалось найти данные о температуре воды.")
+            print("Не удалось найти элемент с температурой.")
             return None
     else:
         print(f"Ошибка при получении данных: {response.status_code}")
