@@ -8,7 +8,7 @@ from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandle
 import threading
 import openai
 from bs4 import BeautifulSoup
-from html import escape  # Добавлено для экранирования HTML
+from html import escape  # Для экранирования специальных символов HTML
 
 # Загрузка ключей из .env файла
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -30,16 +30,17 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Глобальные переменные для хранения chat_id, координат и предыдущей температуры воды
+# Глобальные переменные для хранения chat_id, координат, предыдущей температуры воды и знаков зодиака пользователей
 chat_location = {}
 monitoring_chats = {}
 previous_temperature = None
+user_signs = {}  # Новый словарь для хранения знаков зодиака пользователей
 
 # Функция для получения температуры воды
 def get_water_temperature():
     url = 'https://world-weather.ru/pogoda/montenegro/budva/water/'  # URL страницы
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, как Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     response = requests.get(url, headers=headers)
 
@@ -88,7 +89,7 @@ def water(update, context):
 # Функция для получения текущей температуры воздуха
 def get_temperature(lat, lon):
     logger.info("Получаем температуру для координат: (%s, %s)", lat, lon)
-    url = f'http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric'
+    url = f'http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
     response = requests.get(url)
     data = response.json()
 
@@ -107,7 +108,7 @@ def get_temperature(lat, lon):
 # Функция для получения прогноза на следующие 12 часов
 def get_forecast(lat, lon):
     logger.info("Получаем прогноз на следующие 12 часов для координат: (%s, %s)", lat, lon)
-    url = f'http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric'
+    url = f'http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
     response = requests.get(url)
     data = response.json()
 
@@ -116,7 +117,8 @@ def get_forecast(lat, lon):
         for entry in data['list'][:4]:  # Получаем данные за ближайшие 12 часов (4 временных периода по 3 часа)
             time_period = entry['dt_txt']
             temp = entry['main']['temp']
-            forecast.append(f"{time_period}: {temp}°C")
+            description = entry['weather'][0]['description']
+            forecast.append(f"{time_period}: {temp}°C, {description}")
         logger.info("Прогноз на следующие 12 часов: %s", forecast)
         return forecast
     else:
@@ -124,13 +126,17 @@ def get_forecast(lat, lon):
         return None
 
 # Функция для генерации шуточного прогноза с помощью OpenAI API
-def generate_funny_forecast_with_openai(forecast):
+def generate_funny_forecast_with_openai(forecast, horoscope=None):
     logger.info("Генерация шуточного прогноза через OpenAI для прогноза на 12 часов")
     forecast_text = "\n".join(forecast)
     messages = [
-        {"role": "system", "content": "Ты — синоптик, который делает смешные прогнозы погоды. Пожалуйста, не используй незакрытые или лишние символы форматирования."},
+        {"role": "system", "content": "Ты — синоптик, который делает смешные прогнозы погоды. Пиши на русском языке. Не используй незакрытые или лишние символы форматирования."},
         {"role": "user", "content": f"Создай шуточный прогноз погоды на следующие 12 часов: \n{forecast_text}. Пожалуйста, завершай свои предложения и добавь немного юмора и эмодзи."}
     ]
+
+    # Если предоставлен гороскоп, включаем его в запрос
+    if horoscope:
+        messages.append({"role": "user", "content": f"Также включи следующий гороскоп в прогноз:\n{horoscope}"})
 
     try:
         response = openai.ChatCompletion.create(
@@ -146,15 +152,48 @@ def generate_funny_forecast_with_openai(forecast):
         logger.error("Ошибка при генерации прогноза через OpenAI: %s", str(e))
         return "Прогноз не удалось создать, но я уверен, что погода будет интересной! 😄"
 
+# Функция для генерации гороскопа с помощью OpenAI API
+def generate_horoscope_with_openai(sign):
+    logger.info("Генерация гороскопа для знака: %s", sign)
+    messages = [
+        {"role": "system", "content": "Ты — астролог, который пишет ежедневные гороскопы. Пиши на русском языке. Пиши позитивно и увлекательно."},
+        {"role": "user", "content": f"Напиши гороскоп на сегодня для знака зодиака {sign}. Пиши кратко, дружелюбно и добавь немного юмора и эмодзи."}
+    ]
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=150,
+            temperature=0.7
+        )
+        horoscope = response['choices'][0]['message']['content'].strip()
+        logger.info("Сгенерированный гороскоп: %s", horoscope)
+        return horoscope
+    except Exception as e:
+        logger.error("Ошибка при генерации гороскопа через OpenAI: %s", str(e))
+        return "Не удалось создать гороскоп, но сделайте этот день незабываемым! 😊"
+
 # Функция для отправки утреннего прогноза
 def send_morning_forecast():
     logger.info("Отправка утреннего прогноза для всех пользователей")
     for chat_id, (lat, lon) in monitoring_chats.items():
         temp = get_temperature(lat, lon)
         if temp is not None:
-            forecast = generate_funny_forecast_with_openai([f"Текущая температура: {temp}°C"])
+            forecast_data = [f"Текущая температура: {temp}°C"]
+            forecast_entries = get_forecast(lat, lon)
+            if forecast_entries:
+                forecast_data.extend(forecast_entries)
+
+            # Проверяем, установил ли пользователь знак зодиака
+            horoscope = None
+            if chat_id in user_signs:
+                sign = user_signs[chat_id]
+                horoscope = generate_horoscope_with_openai(sign)
+
+            forecast = generate_funny_forecast_with_openai(forecast_data, horoscope)
             forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
-            # Экранируем специальные HTML-символы
+            # Экранируем специальные символы HTML
             forecast_message = escape(forecast_message)
             bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
         else:
@@ -168,9 +207,15 @@ def send_forecast(update: Update, context: CallbackContext):
         temp = get_temperature(lat, lon)
         forecast_data = get_forecast(lat, lon)
         if forecast_data is not None:
-            forecast = generate_funny_forecast_with_openai(forecast_data)
+            # Проверяем, установил ли пользователь знак зодиака
+            horoscope = None
+            if chat_id in user_signs:
+                sign = user_signs[chat_id]
+                horoscope = generate_horoscope_with_openai(sign)
+
+            forecast = generate_funny_forecast_with_openai(forecast_data, horoscope)
             forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
-            # Экранируем специальные HTML-символы
+            # Экранируем специальные символы HTML
             forecast_message = escape(forecast_message)
             update.message.reply_text(forecast_message, parse_mode="HTML")
         else:
@@ -178,12 +223,41 @@ def send_forecast(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("Локация не была отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
-# Планирование отправки утреннего прогноза
+# Функция для обработки команды /horoscope
+def send_horoscope(update: Update, context: CallbackContext):
+    chat_id = update.message.chat_id
+    if chat_id in user_signs:
+        sign = user_signs[chat_id]
+        horoscope = generate_horoscope_with_openai(sign)
+        horoscope_message = f"Ваш гороскоп на сегодня ({sign.title()}):\n{horoscope}"
+        # Экранируем специальные символы HTML
+        horoscope_message = escape(horoscope_message)
+        update.message.reply_text(horoscope_message, parse_mode="HTML")
+    else:
+        update.message.reply_text("Вы еще не установили свой знак зодиака. Пожалуйста, используйте /sign <ваш_знак>, чтобы установить его.")
+
+# Функция для обработки команды /sign
+def set_sign(update: Update, context: CallbackContext):
+    chat_id = update.message.chat_id
+    if context.args:
+        sign_name = context.args[0].lower()
+        zodiac_signs = ['овен', 'телец', 'близнецы', 'рак', 'лев', 'дева',
+                        'весы', 'скорпион', 'стрелец', 'козерог', 'водолей', 'рыбы']
+
+        if sign_name in zodiac_signs:
+            user_signs[chat_id] = sign_name
+            update.message.reply_text(f"Ваш знак зодиака установлен как {sign_name.title()}.")
+        else:
+            update.message.reply_text("Неверный знак зодиака. Пожалуйста, введите один из 12 знаков зодиака.")
+    else:
+        update.message.reply_text("Пожалуйста, укажите ваш знак зодиака, используя /sign <ваш_знак>.")
+
+# Функция для планирования отправки утреннего прогноза
 def schedule_morning_forecast(time_str):
     logger.info("Запланированная отправка прогноза на %s", time_str)
     schedule.every().day.at(time_str).do(send_morning_forecast)
 
-# Планирование проверки температуры воды каждые 60 минут
+# Функция для планирования проверки температуры воды каждые 60 минут
 def schedule_water_check():
     logger.info("Запланированная проверка температуры воды каждые 60 минут")
     schedule.every(60).minutes.do(check_water_temperature)
@@ -223,13 +297,18 @@ start_handler = CommandHandler('start', start)
 temp_handler = CommandHandler('temp', temp)
 forecast_handler = CommandHandler('forecast', send_forecast)
 water_handler = CommandHandler('water', water)
-location_handler = MessageHandler(Filters.location, location_handler)
+location_message_handler = MessageHandler(Filters.location, location_handler)
+sign_handler = CommandHandler('sign', set_sign)
+horoscope_handler = CommandHandler('horoscope', send_horoscope)
 
+# Добавление обработчиков в диспетчер
 updater.dispatcher.add_handler(start_handler)
 updater.dispatcher.add_handler(temp_handler)
 updater.dispatcher.add_handler(forecast_handler)
 updater.dispatcher.add_handler(water_handler)
-updater.dispatcher.add_handler(location_handler)
+updater.dispatcher.add_handler(location_message_handler)
+updater.dispatcher.add_handler(sign_handler)
+updater.dispatcher.add_handler(horoscope_handler)
 
 # Запуск планирования задач
 schedule_morning_forecast("08:00")  # Задайте время для утреннего прогноза
