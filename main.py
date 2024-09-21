@@ -162,13 +162,15 @@ def generate_horoscope_with_openai(sign):
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=messages,
-            max_tokens=150,
+            max_tokens=300,  # Увеличено с 150 до 300
             temperature=0.7
         )
         horoscope = response['choices'][0]['message']['content'].strip()
+        finish_reason = response['choices'][0].get('finish_reason', 'unknown')
         logger.info("Сгенерированный гороскоп: %s", horoscope)
+        logger.info("Причина завершения генерации: %s", finish_reason)
         return horoscope
     except Exception as e:
         logger.error("Ошибка при генерации гороскопа через OpenAI: %s", str(e))
