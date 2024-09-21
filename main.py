@@ -7,8 +7,8 @@ from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters
 import threading
 import openai
-import re
 from bs4 import BeautifulSoup
+from html import escape  # Добавлено для экранирования HTML
 
 # Загрузка ключей из .env файла
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -85,10 +85,6 @@ def water(update, context):
     else:
         context.bot.send_message(chat_id=chat_id, text="Не удалось получить температуру воды.")
 
-# Функция для экранирования текста в формате MarkdownV2
-def escape_markdown_v2(text):
-    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
-
 # Функция для получения текущей температуры воздуха
 def get_temperature(lat, lon):
     logger.info("Получаем температуру для координат: (%s, %s)", lat, lon)
@@ -132,7 +128,7 @@ def generate_funny_forecast_with_openai(forecast):
     logger.info("Генерация шуточного прогноза через OpenAI для прогноза на 12 часов")
     forecast_text = "\n".join(forecast)
     messages = [
-        {"role": "system", "content": "Ты — синоптик, который делает смешные прогнозы погоды."},
+        {"role": "system", "content": "Ты — синоптик, который делает смешные прогнозы погоды. Пожалуйста, не используй незакрытые или лишние символы форматирования."},
         {"role": "user", "content": f"Создай шуточный прогноз погоды на следующие 12 часов: \n{forecast_text}. Пожалуйста, завершай свои предложения и добавь немного юмора и эмодзи."}
     ]
 
@@ -140,7 +136,7 @@ def generate_funny_forecast_with_openai(forecast):
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            max_tokens=200,
+            max_tokens=500,  # Увеличено до 500
             temperature=0.5
         )
         forecast = response['choices'][0]['message']['content'].strip()
@@ -156,10 +152,13 @@ def send_morning_forecast():
     for chat_id, (lat, lon) in monitoring_chats.items():
         temp = get_temperature(lat, lon)
         if temp is not None:
-            forecast = generate_funny_forecast_with_openai([f"Текущая температура: **{temp}°C**"])
+            forecast = generate_funny_forecast_with_openai([f"Текущая температура: {temp}°C"])
             forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
-            forecast_message = escape_markdown_v2(forecast_message)
-            bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="MarkdownV2")
+            # Экранируем специальные HTML-символы
+            forecast_message = escape(forecast_message)
+            bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
+        else:
+            bot.send_message(chat_id=chat_id, text="Не удалось получить данные о температуре.")
 
 # Функция для отправки прогноза по команде /forecast
 def send_forecast(update: Update, context: CallbackContext):
@@ -171,8 +170,9 @@ def send_forecast(update: Update, context: CallbackContext):
         if forecast_data is not None:
             forecast = generate_funny_forecast_with_openai(forecast_data)
             forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
-            forecast_message = escape_markdown_v2(forecast_message)
-            update.message.reply_text(forecast_message, parse_mode="MarkdownV2")
+            # Экранируем специальные HTML-символы
+            forecast_message = escape(forecast_message)
+            update.message.reply_text(forecast_message, parse_mode="HTML")
         else:
             update.message.reply_text("Не удалось получить данные о прогнозе.")
     else:
