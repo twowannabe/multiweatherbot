@@ -16,6 +16,7 @@ import openai
 from bs4 import BeautifulSoup
 from html import escape
 import re
+import asyncio  # Добавлено для работы с асинхронными функциями
 
 # Загрузка ключей из .env файла
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -54,8 +55,8 @@ def get_water_temperature():
     if response.status_code == 200:
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Попытка найти элемент с классом 'weather-temperature-value'
-        temp_element = soup.find('div', class_='weather-temperature-value')
+        # Попытка найти элемент с классом, содержащим информацию о температуре воды
+        temp_element = soup.find('div', class_=re.compile(r'temperature|temp', re.IGNORECASE))
 
         if temp_element:
             temp_text = temp_element.get_text(strip=True)
@@ -84,15 +85,18 @@ def check_water_temperature():
             previous_temperature = current_temperature
         elif current_temperature < previous_temperature:
             message = f"Температура воды упала! Сейчас: {current_temperature}°C, предыдущая: {previous_temperature}°C."
-            send_notification_to_all_users(message)
+            asyncio.run(send_notification_to_all_users(message))
         previous_temperature = current_temperature
 
-# Функция для отправки уведомления всем пользователям
-def send_notification_to_all_users(message):
+# Асинхронная функция для отправки уведомления всем пользователям
+async def send_notification_to_all_users(message):
     for chat_id in monitoring_chats.keys():
-        bot.send_message(chat_id=chat_id, text=message)
+        try:
+            await bot.send_message(chat_id=chat_id, text=message)
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
-# Функция для обработки команды /water
+# Асинхронная функция для обработки команды /water
 async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     temperature = get_water_temperature()
@@ -163,7 +167,7 @@ def generate_funny_forecast_with_openai(forecast):
         logger.error("Ошибка при генерации прогноза через OpenAI: %s", str(e))
         return "Прогноз не удалось создать, но я уверен, что погода будет интересной! 😄"
 
-# Функция для отправки утреннего прогноза
+# Асинхронная функция для отправки утреннего прогноза
 async def send_morning_forecast():
     logger.info("Отправка утреннего прогноза для всех пользователей")
     for chat_id, coords in monitoring_chats.items():
@@ -180,13 +184,22 @@ async def send_morning_forecast():
                 forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
                 # Экранируем специальные символы HTML
                 forecast_message = escape(forecast_message)
-                await bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
+                try:
+                    await bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
+                except Exception as e:
+                    logger.error(f"Не удалось отправить прогноз пользователю {chat_id}: {e}")
             else:
-                await bot.send_message(chat_id=chat_id, text="Не удалось получить данные о температуре.")
+                try:
+                    await bot.send_message(chat_id=chat_id, text="Не удалось получить данные о температуре.")
+                except Exception as e:
+                    logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
         else:
-            await bot.send_message(chat_id=chat_id, text="Не удалось получить координаты для прогноза.")
+            try:
+                await bot.send_message(chat_id=chat_id, text="Не удалось получить координаты для прогноза.")
+            except Exception as e:
+                logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
-# Функция для отправки прогноза по команде /forecast
+# Асинхронная функция для отправки прогноза по команде /forecast
 async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id in chat_location:
@@ -204,7 +217,7 @@ async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Локация не была отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
-# Функция для обработки команды /horoscope
+# Асинхронная функция для обработки команды /horoscope
 async def send_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id in user_signs:
@@ -241,7 +254,7 @@ def generate_horoscope_with_openai(sign):
         logger.error("Ошибка при генерации гороскопа через OpenAI: %s", str(e))
         return "Не удалось создать гороскоп, но сделайте этот день незабываемым! 😊"
 
-# Функция для обработки команды /sign
+# Асинхронная функция для обработки команды /sign
 async def set_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if context.args:
@@ -267,7 +280,7 @@ def schedule_water_check():
     logger.info("Запланированная проверка температуры воды каждые 60 минут")
     schedule.every(60).minutes.do(check_water_temperature)
 
-# Функция для обработки команды /start
+# Асинхронная функция для обработки команды /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text(
@@ -276,7 +289,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id not in monitoring_chats:
         monitoring_chats[chat_id] = None
 
-# Функция для обработки команды /temp
+# Асинхронная функция для обработки команды /temp
 async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
@@ -290,7 +303,7 @@ async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Локация не была отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
-# Функция для обработки получения локации
+# Асинхронная функция для обработки получения локации
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if update.message.location:
@@ -307,7 +320,7 @@ application.add_handler(CommandHandler('start', start))
 application.add_handler(CommandHandler('temp', temp))
 application.add_handler(CommandHandler('forecast', send_forecast))
 application.add_handler(CommandHandler('water', water))
-application.add_handler(MessageHandler(filters.Location.ALL, location_handler))
+application.add_handler(MessageHandler(filters.LOCATION, location_handler))  # Исправлено здесь
 application.add_handler(CommandHandler('sign', set_sign))
 application.add_handler(CommandHandler('horoscope', send_horoscope))
 
