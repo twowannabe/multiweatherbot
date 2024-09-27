@@ -8,7 +8,8 @@ from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandle
 import threading
 import openai
 from bs4 import BeautifulSoup
-from html import escape  # Для экранирования специальных символов HTML
+from html import escape
+import re  # Для использования регулярных выражений
 
 # Загрузка ключей из .env файла
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -34,26 +35,34 @@ logger = logging.getLogger(__name__)
 chat_location = {}
 monitoring_chats = {}
 previous_temperature = None
-user_signs = {}  # Новый словарь для хранения знаков зодиака пользователей
+user_signs = {}  # Словарь для хранения знаков зодиака пользователей
 
 # Функция для получения температуры воды
 def get_water_temperature():
-    url = 'https://world-weather.ru/pogoda/montenegro/budva/water/'  # URL страницы
+    url = 'https://world-weather.ru/pogoda/montenegro/budva/water/'
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, как Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     response = requests.get(url, headers=headers)
 
     if response.status_code == 200:
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Найти элемент с температурой воды
-        temp_element = soup.find('div', id='weather-now-number')
+        # Попытка найти элемент с классом 'weather-temperature-value'
+        temp_element = soup.find('div', class_='weather-temperature-value')
 
         if temp_element:
-            temp = temp_element.get_text(strip=True).replace("°C", "").replace("+", "")
-            return float(temp)
+            temp_text = temp_element.get_text(strip=True)
+            # Извлекаем температуру с помощью регулярного выражения
+            match = re.search(r'(\d+)', temp_text)
+            if match:
+                temp = match.group(1)
+                return float(temp)
+            else:
+                logger.error("Не удалось извлечь температуру воды из текста.")
+                return None
         else:
+            logger.error("Не удалось найти элемент с информацией о температуре воды.")
             return None
     else:
         logger.error(f"Ошибка при запросе данных: {response.status_code}")
@@ -126,7 +135,7 @@ def get_forecast(lat, lon):
         return None
 
 # Функция для генерации шуточного прогноза с помощью OpenAI API
-def generate_funny_forecast_with_openai(forecast, horoscope=None):
+def generate_funny_forecast_with_openai(forecast):
     logger.info("Генерация шуточного прогноза через OpenAI для прогноза на 12 часов")
     forecast_text = "\n".join(forecast)
     messages = [
@@ -134,15 +143,11 @@ def generate_funny_forecast_with_openai(forecast, horoscope=None):
         {"role": "user", "content": f"Создай шуточный прогноз погоды на следующие 12 часов: \n{forecast_text}. Пожалуйста, завершай свои предложения и добавь немного юмора и эмодзи."}
     ]
 
-    # Если предоставлен гороскоп, включаем его в запрос
-    if horoscope:
-        messages.append({"role": "user", "content": f"Также включи следующий гороскоп в прогноз:\n{horoscope}"})
-
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            max_tokens=500,  # Увеличено до 500
+            max_tokens=500,
             temperature=0.5
         )
         forecast = response['choices'][0]['message']['content'].strip()
@@ -151,30 +156,6 @@ def generate_funny_forecast_with_openai(forecast, horoscope=None):
     except Exception as e:
         logger.error("Ошибка при генерации прогноза через OpenAI: %s", str(e))
         return "Прогноз не удалось создать, но я уверен, что погода будет интересной! 😄"
-
-# Функция для генерации гороскопа с помощью OpenAI API
-def generate_horoscope_with_openai(sign):
-    logger.info("Генерация гороскопа для знака: %s", sign)
-    messages = [
-        {"role": "system", "content": "Ты — астролог, который пишет ежедневные гороскопы. Пиши на русском языке. Пиши позитивно и увлекательно."},
-        {"role": "user", "content": f"Напиши гороскоп на сегодня для знака зодиака {sign}. Пиши кратко, дружелюбно и добавь немного юмора и эмодзи."}
-    ]
-
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            max_tokens=300,  # Увеличено с 150 до 300
-            temperature=0.7
-        )
-        horoscope = response['choices'][0]['message']['content'].strip()
-        finish_reason = response['choices'][0].get('finish_reason', 'unknown')
-        logger.info("Сгенерированный гороскоп: %s", horoscope)
-        logger.info("Причина завершения генерации: %s", finish_reason)
-        return horoscope
-    except Exception as e:
-        logger.error("Ошибка при генерации гороскопа через OpenAI: %s", str(e))
-        return "Не удалось создать гороскоп, но сделайте этот день незабываемым! 😊"
 
 # Функция для отправки утреннего прогноза
 def send_morning_forecast():
@@ -187,13 +168,7 @@ def send_morning_forecast():
             if forecast_entries:
                 forecast_data.extend(forecast_entries)
 
-            # Проверяем, установил ли пользователь знак зодиака
-            horoscope = None
-            if chat_id in user_signs:
-                sign = user_signs[chat_id]
-                horoscope = generate_horoscope_with_openai(sign)
-
-            forecast = generate_funny_forecast_with_openai(forecast_data, horoscope)
+            forecast = generate_funny_forecast_with_openai(forecast_data)
             forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
             # Экранируем специальные символы HTML
             forecast_message = escape(forecast_message)
@@ -209,13 +184,7 @@ def send_forecast(update: Update, context: CallbackContext):
         temp = get_temperature(lat, lon)
         forecast_data = get_forecast(lat, lon)
         if forecast_data is not None:
-            # Проверяем, установил ли пользователь знак зодиака
-            horoscope = None
-            if chat_id in user_signs:
-                sign = user_signs[chat_id]
-                horoscope = generate_horoscope_with_openai(sign)
-
-            forecast = generate_funny_forecast_with_openai(forecast_data, horoscope)
+            forecast = generate_funny_forecast_with_openai(forecast_data)
             forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
             # Экранируем специальные символы HTML
             forecast_message = escape(forecast_message)
@@ -237,6 +206,30 @@ def send_horoscope(update: Update, context: CallbackContext):
         update.message.reply_text(horoscope_message, parse_mode="HTML")
     else:
         update.message.reply_text("Вы еще не установили свой знак зодиака. Пожалуйста, используйте /sign <ваш_знак>, чтобы установить его.")
+
+# Функция для генерации гороскопа с помощью OpenAI API
+def generate_horoscope_with_openai(sign):
+    logger.info("Генерация гороскопа для знака: %s", sign)
+    messages = [
+        {"role": "system", "content": "Ты — астролог, который пишет ежедневные гороскопы. Пиши на русском языке. Пиши позитивно и увлекательно."},
+        {"role": "user", "content": f"Напиши гороскоп на сегодня для знака зодиака {sign}. Пиши кратко, дружелюбно и добавь немного юмора и эмодзи."}
+    ]
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.7
+        )
+        horoscope = response['choices'][0]['message']['content'].strip()
+        finish_reason = response['choices'][0].get('finish_reason', 'unknown')
+        logger.info("Сгенерированный гороскоп: %s", horoscope)
+        logger.info("Причина завершения генерации: %s", finish_reason)
+        return horoscope
+    except Exception as e:
+        logger.error("Ошибка при генерации гороскопа через OpenAI: %s", str(e))
+        return "Не удалось создать гороскоп, но сделайте этот день незабываемым! 😊"
 
 # Функция для обработки команды /sign
 def set_sign(update: Update, context: CallbackContext):
