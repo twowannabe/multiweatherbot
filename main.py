@@ -3,13 +3,19 @@ import schedule
 import time
 import logging
 from decouple import config
-from telegram import Bot, Update
-from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters
+from telegram import Update, Bot
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 import threading
 import openai
 from bs4 import BeautifulSoup
 from html import escape
-import re  # Для использования регулярных выражений
+import re
 
 # Загрузка ключей из .env файла
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -21,7 +27,7 @@ openai.api_key = OPENAI_API_KEY
 
 # Инициализация бота
 bot = Bot(token=TELEGRAM_TOKEN)
-updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
+application = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # Настройка логирования
 logging.basicConfig(
@@ -41,7 +47,7 @@ user_signs = {}  # Словарь для хранения знаков зоди�
 def get_water_temperature():
     url = 'https://world-weather.ru/pogoda/montenegro/budva/water/'
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, как Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     response = requests.get(url, headers=headers)
 
@@ -87,13 +93,13 @@ def send_notification_to_all_users(message):
         bot.send_message(chat_id=chat_id, text=message)
 
 # Функция для обработки команды /water
-def water(update, context):
-    chat_id = update.message.chat_id
+async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     temperature = get_water_temperature()
     if temperature is not None:
-        context.bot.send_message(chat_id=chat_id, text=f"Температура воды в Будве: {temperature}°C")
+        await update.message.reply_text(f"Температура воды в Будве: {temperature}°C")
     else:
-        context.bot.send_message(chat_id=chat_id, text="Не удалось получить температуру воды.")
+        await update.message.reply_text("Не удалось получить температуру воды.")
 
 # Функция для получения текущей температуры воздуха
 def get_temperature(lat, lon):
@@ -158,27 +164,31 @@ def generate_funny_forecast_with_openai(forecast):
         return "Прогноз не удалось создать, но я уверен, что погода будет интересной! 😄"
 
 # Функция для отправки утреннего прогноза
-def send_morning_forecast():
+async def send_morning_forecast():
     logger.info("Отправка утреннего прогноза для всех пользователей")
-    for chat_id, (lat, lon) in monitoring_chats.items():
-        temp = get_temperature(lat, lon)
-        if temp is not None:
-            forecast_data = [f"Текущая температура: {temp}°C"]
-            forecast_entries = get_forecast(lat, lon)
-            if forecast_entries:
-                forecast_data.extend(forecast_entries)
+    for chat_id, coords in monitoring_chats.items():
+        if coords:
+            lat, lon = coords
+            temp = get_temperature(lat, lon)
+            if temp is not None:
+                forecast_data = [f"Текущая температура: {temp}°C"]
+                forecast_entries = get_forecast(lat, lon)
+                if forecast_entries:
+                    forecast_data.extend(forecast_entries)
 
-            forecast = generate_funny_forecast_with_openai(forecast_data)
-            forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
-            # Экранируем специальные символы HTML
-            forecast_message = escape(forecast_message)
-            bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
+                forecast = generate_funny_forecast_with_openai(forecast_data)
+                forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
+                # Экранируем специальные символы HTML
+                forecast_message = escape(forecast_message)
+                await bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
+            else:
+                await bot.send_message(chat_id=chat_id, text="Не удалось получить данные о температуре.")
         else:
-            bot.send_message(chat_id=chat_id, text="Не удалось получить данные о температуре.")
+            await bot.send_message(chat_id=chat_id, text="Не удалось получить координаты для прогноза.")
 
 # Функция для отправки прогноза по команде /forecast
-def send_forecast(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
+async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     if chat_id in chat_location:
         lat, lon = chat_location[chat_id]
         temp = get_temperature(lat, lon)
@@ -188,24 +198,24 @@ def send_forecast(update: Update, context: CallbackContext):
             forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
             # Экранируем специальные символы HTML
             forecast_message = escape(forecast_message)
-            update.message.reply_text(forecast_message, parse_mode="HTML")
+            await update.message.reply_text(forecast_message, parse_mode="HTML")
         else:
-            update.message.reply_text("Не удалось получить данные о прогнозе.")
+            await update.message.reply_text("Не удалось получить данные о прогнозе.")
     else:
-        update.message.reply_text("Локация не была отправлена. Пожалуйста, сначала отправьте свою локацию.")
+        await update.message.reply_text("Локация не была отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
 # Функция для обработки команды /horoscope
-def send_horoscope(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
+async def send_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     if chat_id in user_signs:
         sign = user_signs[chat_id]
         horoscope = generate_horoscope_with_openai(sign)
         horoscope_message = f"Ваш гороскоп на сегодня ({sign.title()}):\n{horoscope}"
         # Экранируем специальные символы HTML
         horoscope_message = escape(horoscope_message)
-        update.message.reply_text(horoscope_message, parse_mode="HTML")
+        await update.message.reply_text(horoscope_message, parse_mode="HTML")
     else:
-        update.message.reply_text("Вы еще не установили свой знак зодиака. Пожалуйста, используйте /sign <ваш_знак>, чтобы установить его.")
+        await update.message.reply_text("Вы еще не установили свой знак зодиака. Пожалуйста, используйте /sign <ваш_знак>, чтобы установить его.")
 
 # Функция для генерации гороскопа с помощью OpenAI API
 def generate_horoscope_with_openai(sign):
@@ -232,8 +242,8 @@ def generate_horoscope_with_openai(sign):
         return "Не удалось создать гороскоп, но сделайте этот день незабываемым! 😊"
 
 # Функция для обработки команды /sign
-def set_sign(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
+async def set_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     if context.args:
         sign_name = context.args[0].lower()
         zodiac_signs = ['овен', 'телец', 'близнецы', 'рак', 'лев', 'дева',
@@ -241,16 +251,16 @@ def set_sign(update: Update, context: CallbackContext):
 
         if sign_name in zodiac_signs:
             user_signs[chat_id] = sign_name
-            update.message.reply_text(f"Ваш знак зодиака установлен как {sign_name.title()}.")
+            await update.message.reply_text(f"Ваш знак зодиака установлен как {sign_name.title()}.")
         else:
-            update.message.reply_text("Неверный знак зодиака. Пожалуйста, введите один из 12 знаков зодиака.")
+            await update.message.reply_text("Неверный знак зодиака. Пожалуйста, введите один из 12 знаков зодиака.")
     else:
-        update.message.reply_text("Пожалуйста, укажите ваш знак зодиака, используя /sign <ваш_знак>.")
+        await update.message.reply_text("Пожалуйста, укажите ваш знак зодиака, используя /sign <ваш_знак>.")
 
 # Функция для планирования отправки утреннего прогноза
 def schedule_morning_forecast(time_str):
     logger.info("Запланированная отправка прогноза на %s", time_str)
-    schedule.every().day.at(time_str).do(send_morning_forecast)
+    schedule.every().day.at(time_str).do(lambda: asyncio.run(send_morning_forecast()))
 
 # Функция для планирования проверки температуры воды каждые 60 минут
 def schedule_water_check():
@@ -258,52 +268,48 @@ def schedule_water_check():
     schedule.every(60).minutes.do(check_water_temperature)
 
 # Функция для обработки команды /start
-def start(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
-    update.message.reply_text("Бот запущен! Пожалуйста, отправьте вашу локацию, чтобы я мог отслеживать температуру воздуха и отправлять прогнозы погоды.")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    await update.message.reply_text(
+        "Бот запущен! Пожалуйста, отправьте вашу локацию, чтобы я мог отслеживать температуру воздуха и отправлять прогнозы погоды."
+    )
     if chat_id not in monitoring_chats:
         monitoring_chats[chat_id] = None
 
 # Функция для обработки команды /temp
-def temp(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
+async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
 
     if chat_id in chat_location:
         lat, lon = chat_location[chat_id]
         temp = get_temperature(lat, lon)
         if temp is not None:
-            update.message.reply_text(f"Текущая температура воздуха: {temp}°C")
+            await update.message.reply_text(f"Текущая температура воздуха: {temp}°C")
         else:
-            update.message.reply_text("Не удалось получить данные о температуре.")
+            await update.message.reply_text("Не удалось получить данные о температуре.")
     else:
-        update.message.reply_text("Локация не была отправлена. Пожалуйста, сначала отправьте свою локацию.")
+        await update.message.reply_text("Локация не была отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
 # Функция для обработки получения локации
-def location_handler(update: Update, context: CallbackContext):
-    chat_id = update.message.chat_id
-    lat = update.message.location.latitude
-    lon = update.message.location.longitude
-    chat_location[chat_id] = (lat, lon)
-    monitoring_chats[chat_id] = (lat, lon)
-    update.message.reply_text(f"Локация получена! Теперь вы будете получать прогноз погоды каждое утро.")
+async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if update.message.location:
+        lat = update.message.location.latitude
+        lon = update.message.location.longitude
+        chat_location[chat_id] = (lat, lon)
+        monitoring_chats[chat_id] = (lat, lon)
+        await update.message.reply_text(f"Локация получена! Теперь вы будете получать прогноз погоды каждое утро.")
+    else:
+        await update.message.reply_text("Не удалось получить вашу локацию. Пожалуйста, попробуйте снова.")
 
 # Настройка обработчиков команд и сообщений
-start_handler = CommandHandler('start', start)
-temp_handler = CommandHandler('temp', temp)
-forecast_handler = CommandHandler('forecast', send_forecast)
-water_handler = CommandHandler('water', water)
-location_message_handler = MessageHandler(Filters.location, location_handler)
-sign_handler = CommandHandler('sign', set_sign)
-horoscope_handler = CommandHandler('horoscope', send_horoscope)
-
-# Добавление обработчиков в диспетчер
-updater.dispatcher.add_handler(start_handler)
-updater.dispatcher.add_handler(temp_handler)
-updater.dispatcher.add_handler(forecast_handler)
-updater.dispatcher.add_handler(water_handler)
-updater.dispatcher.add_handler(location_message_handler)
-updater.dispatcher.add_handler(sign_handler)
-updater.dispatcher.add_handler(horoscope_handler)
+application.add_handler(CommandHandler('start', start))
+application.add_handler(CommandHandler('temp', temp))
+application.add_handler(CommandHandler('forecast', send_forecast))
+application.add_handler(CommandHandler('water', water))
+application.add_handler(MessageHandler(filters.Location.ALL, location_handler))
+application.add_handler(CommandHandler('sign', set_sign))
+application.add_handler(CommandHandler('horoscope', send_horoscope))
 
 # Запуск планирования задач
 schedule_morning_forecast("08:00")  # Задайте время для утреннего прогноза
@@ -318,5 +324,5 @@ def run_scheduler():
 threading.Thread(target=run_scheduler, daemon=True).start()
 
 # Запуск бота
-updater.start_polling()
-updater.idle()
+if __name__ == '__main__':
+    application.run_polling()
