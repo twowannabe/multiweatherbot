@@ -51,17 +51,15 @@ def get_water_temperature():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
 
-    response = requests.get(url, headers=headers)
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()  # Проверка на наличие ошибок HTTP (например, 404 или 500)
 
-    if response.status_code == 200:
         soup = BeautifulSoup(response.content, 'html.parser')
-
-        # Попытка найти элемент с классом, содержащим информацию о температуре воды
         temp_element = soup.find('div', class_=re.compile(r'temperature|temp', re.IGNORECASE))
 
         if temp_element:
             temp_text = temp_element.get_text(strip=True)
-            # Извлекаем температуру с помощью регулярного выражения
             match = re.search(r'(\d+)', temp_text)
             if match:
                 temp = match.group(1)
@@ -72,11 +70,10 @@ def get_water_temperature():
         else:
             logger.error("Не удалось найти элемент с информацией о температуре воды.")
             return None
-    else:
-        logger.error(f"Ошибка при запросе данных: {response.status_code}")
-        return None
 
-# Функция для проверки изменения температуры воды и отправки уведомлений
+    except RequestException as e:
+        logger.error(f"Ошибка при запросе данных: {e}")
+        return None
 def check_water_temperature():
     global previous_temperature
     current_temperature = get_water_temperature()
