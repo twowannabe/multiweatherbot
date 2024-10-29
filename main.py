@@ -55,14 +55,14 @@ def get_water_temperature():
 
     try:
         response = requests.get(url, headers=headers)
-        response.raise_for_status()  # Проверка на наличие ошибок HTTP (например, 404 или 500)
+        response.raise_for_status()
 
         soup = BeautifulSoup(response.content, 'html.parser')
-        temp_element = soup.find('div', class_=re.compile(r'temperature|temp', re.IGNORECASE))
+        temp_element = soup.find('div', id='weather-now-number')
 
         if temp_element:
             temp_text = temp_element.get_text(strip=True)
-            match = re.search(r'(\d+)', temp_text)
+            match = re.search(r'([-+]?\d+)', temp_text)
             if match:
                 temp = match.group(1)
                 return float(temp)
@@ -73,7 +73,7 @@ def get_water_temperature():
             logger.error("Не удалось найти элемент с информацией о температуре воды.")
             return None
 
-    except RequestException as e:
+    except requests.RequestException as e:
         logger.error(f"Ошибка при запросе данных: {e}")
         return None
 def check_water_temperature():
