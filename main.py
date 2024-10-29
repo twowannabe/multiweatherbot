@@ -37,6 +37,8 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+# Отключение логов от httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Глобальные переменные для хранения chat_id, координат, предыдущей температуры воды и знаков зодиака пользователей
 chat_location = {}
