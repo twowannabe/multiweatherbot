@@ -1,0 +1,8 @@
+requests
+schedule
+python-telegram-bot
+python-decouple
+beautifulsoup4
+openai
+html5lib
+aiohttp
