@@ -78,8 +78,8 @@ The bot uses the `schedule` library to perform regular tasks:
 
 ## Contributing
 
-Feel free to open an issue or create a pull request if you have suggestions or improvements. Contributions are always welcome!
+Contributions are not allowed without explicit permission. Please contact the repository owner if you have suggestions or improvements.
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for more details.
+All rights reserved. This project is not open for redistribution, copying, or modification without explicit permission from the copyright holder. See the `LICENSE` file for more details.
