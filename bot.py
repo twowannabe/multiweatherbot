@@ -76,7 +76,7 @@ def check_water_temperature():
 async def send_notification_to_all_users(message):
     for chat_id in monitoring_chats.keys():
         try:
-            await bot.send_message(chat_id=chat_id, text=message)
+            await application.bot.send_message(chat_id=chat_id, text=message)
         except Exception as e:
             logger.error(f"Failed to send message to user {chat_id}: {e}")
 
@@ -109,7 +109,7 @@ def generate_funny_forecast_with_openai(forecast):
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-3.5-turbo",
             messages=messages,
             max_tokens=500,
             temperature=0.5
@@ -118,6 +118,24 @@ def generate_funny_forecast_with_openai(forecast):
     except Exception as e:
         logger.error(f"Error generating forecast via OpenAI: {e}")
         return "Failed to create forecast, but I'm sure the weather will be interesting! 😄"
+
+def generate_horoscope_with_openai(sign):
+    messages = [
+        {"role": "system", "content": "You are an astrologer who writes daily horoscopes. Write in Russian with humor and emojis."},
+        {"role": "user", "content": f"Write a horoscope for today for the zodiac sign {sign}."}
+    ]
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.7
+        )
+        return response['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        logger.error(f"Error generating horoscope via OpenAI: {e}")
+        return "Failed to create horoscope, but make today unforgettable! 😊"
 
 async def send_morning_forecast():
     for chat_id, coords in monitoring_chats.items():
@@ -134,7 +152,7 @@ async def send_morning_forecast():
                 forecast_message = f"Current air temperature: {temp}°C\n{forecast}"
                 forecast_message = escape(forecast_message)
                 try:
-                    await bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
+                    await application.bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
                 except Exception as e:
                     logger.error(f"Failed to send forecast to user {chat_id}: {e}")
 
@@ -153,6 +171,17 @@ async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Failed to get forecast data.")
     else:
         await update.message.reply_text("Location not sent. Please send your location first.")
+
+async def send_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in user_signs:
+        sign = user_signs[chat_id]
+        horoscope = generate_horoscope_with_openai(sign)
+        horoscope_message = f"Your horoscope for today ({sign.title()}):\n{horoscope}"
+        horoscope_message = escape(horoscope_message)
+        await update.message.reply_text(horoscope_message, parse_mode="HTML")
+    else:
+        await update.message.reply_text("You haven't set your zodiac sign yet. Please use /sign <your_sign> to set it.")
 
 async def set_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -189,6 +218,14 @@ async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Location not sent. Please send your location first.")
 
+async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    temperature = get_water_temperature()
+    if temperature is not None:
+        await update.message.reply_text(f"Water temperature in Budva: {temperature}°C")
+    else:
+        await update.message.reply_text("Failed to get water temperature.")
+
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if update.message.location:
@@ -203,8 +240,10 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_handler(CommandHandler('start', start))
 application.add_handler(CommandHandler('temp', temp))
 application.add_handler(CommandHandler('forecast', send_forecast))
+application.add_handler(CommandHandler('water', water))
 application.add_handler(MessageHandler(filters.LOCATION, location_handler))
 application.add_handler(CommandHandler('sign', set_sign))
+application.add_handler(CommandHandler('horoscope', send_horoscope))
 
 def schedule_morning_forecast(time_str):
     schedule.every().day.at(time_str).do(lambda: asyncio.run(send_morning_forecast()))
