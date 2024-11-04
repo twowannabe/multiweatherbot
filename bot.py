@@ -137,6 +137,29 @@ def generate_horoscope_with_openai(sign):
         logger.error(f"Error generating horoscope via OpenAI: {e}")
         return "Failed to create horoscope, but make today unforgettable! 😊"
 
+def get_solar_flare_activity():
+    url = f"https://api.nasa.gov/DONKI/FLR?startDate={time.strftime('%Y-%m-%d')}&api_key={NASA_API_KEY}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+        if data:
+            flare_events = [f"Class {event.get('classType', 'unknown')} flare expected at {event.get('beginTime', 'unknown')}" for event in data]
+            return flare_events if flare_events else None
+        return None
+    except requests.RequestException as e:
+        logger.error(f"Error fetching solar flare data: {e}")
+        return None
+
+async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    flare_events = get_solar_flare_activity()
+    if flare_events:
+        message = "Attention! Solar flares expected in the next 12 hours:\n" + "\n".join(flare_events)
+    else:
+        message = "No solar flares expected in the next 12 hours."
+    await update.message.reply_text(message)
+
 async def send_morning_forecast():
     for chat_id, coords in monitoring_chats.items():
         if coords:
@@ -241,6 +264,7 @@ application.add_handler(CommandHandler('start', start))
 application.add_handler(CommandHandler('temp', temp))
 application.add_handler(CommandHandler('forecast', send_forecast))
 application.add_handler(CommandHandler('water', water))
+application.add_handler(CommandHandler('solarflare', send_solar_flare_forecast))
 application.add_handler(MessageHandler(filters.LOCATION, location_handler))
 application.add_handler(CommandHandler('sign', set_sign))
 application.add_handler(CommandHandler('horoscope', send_horoscope))
