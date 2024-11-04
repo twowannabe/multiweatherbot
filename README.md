@@ -5,7 +5,7 @@ This repository contains a Telegram bot that provides weather forecasts, water t
 ## Features
 
 - **Weather Information**: Get current temperature, 12-hour forecast, and water temperature for specified locations.
-- **Solar Activity Updates**: Notify users of upcoming solar flares using NASA's DONKI API.
+- **Solar Activity Updates**: Notify users of upcoming solar flares using NASA's DONKI API, as well as provide on-demand solar flare information.
 - **Horoscopes**: Generate daily horoscopes with a hint of humor using OpenAI's GPT model.
 - **Location-Based Forecasts**: Track and provide weather information based on user location.
 - **Humorous Weather Forecasts**: Generate funny weather forecasts using OpenAI's API.
@@ -60,6 +60,7 @@ The bot will start polling and automatically send notifications based on the sch
 - `/water` - Provides the current water temperature in Budva.
 - `/sign <your_sign>` - Sets your zodiac sign for daily horoscopes.
 - `/horoscope` - Sends your daily horoscope.
+- `/solarflare` - Provides information about expected solar flares in the next 12 hours.
 
 ## Scheduling
 
@@ -75,6 +76,7 @@ The bot uses the `schedule` library to perform regular tasks:
 - Water temperature data is scraped from a website using BeautifulSoup.
 - Daily horoscopes and humorous forecasts are generated with OpenAI's GPT model.
 - Users' locations are used to provide tailored weather updates.
+- Solar flare activity is checked using NASA's DONKI API, and notifications are sent when activity is detected.
 
 ## Contributing
 
