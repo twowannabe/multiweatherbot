@@ -84,4 +84,4 @@ Contributions are not allowed without explicit permission. Please contact the re
 
 ## License
 
-All rights reserved. This project is not open for redistribution, copying, or modification without explicit permission from the copyright holder. See the `LICENSE` file for more details.
+This project is licensed for personal use only. You are free to use and modify the code for personal purposes, but redistribution, commercial use, and publication are prohibited. The original author (Volodymyr Kozlov) must be credited in any modifications. See the `LICENSE` file for more details.
