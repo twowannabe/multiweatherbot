@@ -17,7 +17,10 @@ from bs4 import BeautifulSoup
 from html import escape
 import re
 import asyncio
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
+# Настройки для подключения к API и боту
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
 API_KEY = config('OPENWEATHERMAP_API_KEY')
 OPENAI_API_KEY = config('OPENAI_API_KEY')
@@ -34,11 +37,46 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+# Глобальные переменные для хранения данных пользователей
 chat_location = {}
 monitoring_chats = {}
 previous_temperature = None
 user_signs = {}
 
+# Функция для подключения к базе данных
+def get_db_connection():
+    return psycopg2.connect(
+        host=config('DB_HOST'),
+        port=config('DB_PORT'),
+        dbname=config('DB_NAME'),
+        user=config('DB_USER'),
+        password=config('DB_PASSWORD')
+    )
+
+# Сохранение локации пользователя в базе данных
+def save_location_to_db(chat_id, lat, lon):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO user_locations (chat_id, latitude, longitude) VALUES (%s, %s, %s) "
+        "ON CONFLICT (chat_id) DO UPDATE SET latitude = %s, longitude = %s",
+        (chat_id, lat, lon, lat, lon)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+# Загрузка всех локаций пользователей из базы данных при старте
+def load_all_locations():
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("SELECT chat_id, latitude, longitude FROM user_locations")
+    locations = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return {row['chat_id']: (row['latitude'], row['longitude']) for row in locations}
+
+# Функция для получения температуры воды
 def get_water_temperature():
     url = 'https://world-weather.ru/pogoda/montenegro/budva/water/'
     headers = {
@@ -58,9 +96,10 @@ def get_water_temperature():
                 return float(match.group(1))
         return None
     except requests.RequestException as e:
-        logger.error(f"Error fetching water temperature: {e}")
+        logger.error(f"Ошибка получения температуры воды: {e}")
         return None
 
+# Проверка изменения температуры воды
 def check_water_temperature():
     global previous_temperature
     current_temperature = get_water_temperature()
@@ -69,17 +108,19 @@ def check_water_temperature():
         if previous_temperature is None:
             previous_temperature = current_temperature
         elif current_temperature < previous_temperature:
-            message = f"Water temperature dropped! Current: {current_temperature}°C, Previous: {previous_temperature}°C."
+            message = f"Температура воды упала! Сейчас: {current_temperature}°C, ранее: {previous_temperature}°C."
             asyncio.run(send_notification_to_all_users(message))
         previous_temperature = current_temperature
 
+# Отправка уведомлений всем пользователям
 async def send_notification_to_all_users(message):
     for chat_id in monitoring_chats.keys():
         try:
             await application.bot.send_message(chat_id=chat_id, text=message)
         except Exception as e:
-            logger.error(f"Failed to send message to user {chat_id}: {e}")
+            logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
+# Функция для получения текущей температуры по координатам
 def get_temperature(lat, lon):
     url = f'http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
     response = requests.get(url)
@@ -87,9 +128,10 @@ def get_temperature(lat, lon):
 
     if response.status_code == 200 and 'main' in data and 'temp' in data['main']:
         return data['main']['temp']
-    logger.error(f"Error fetching temperature data: {response.status_code}")
+    logger.error(f"Ошибка получения данных о температуре: {response.status_code}")
     return None
 
+# Получение прогноза погоды по координатам
 def get_forecast(lat, lon):
     url = f'http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
     response = requests.get(url)
@@ -97,9 +139,10 @@ def get_forecast(lat, lon):
 
     if response.status_code == 200:
         return [f"{entry['dt_txt']}: {entry['main']['temp']}°C, {entry['weather'][0]['description']}" for entry in data['list'][:4]]
-    logger.error(f"Error fetching forecast: {response.status_code}")
+    logger.error(f"Ошибка получения прогноза: {response.status_code}")
     return None
 
+# Генерация прогноза с юмором с использованием OpenAI
 def generate_funny_forecast_with_openai(forecast):
     forecast_text = "\n".join(forecast)
     messages = [
@@ -116,9 +159,10 @@ def generate_funny_forecast_with_openai(forecast):
         )
         return response['choices'][0]['message']['content'].strip()
     except Exception as e:
-        logger.error(f"Error generating forecast via OpenAI: {e}")
-        return "Failed to create forecast, but I'm sure the weather will be interesting! 😄"
+        logger.error(f"Ошибка генерации прогноза через OpenAI: {e}")
+        return "Не удалось создать прогноз, но погода точно будет интересной! 😄"
 
+# Генерация гороскопа с использованием OpenAI
 def generate_horoscope_with_openai(sign):
     messages = [
         {"role": "system", "content": "You are an astrologer who writes daily horoscopes. Write in Russian with humor and emojis."},
@@ -134,9 +178,10 @@ def generate_horoscope_with_openai(sign):
         )
         return response['choices'][0]['message']['content'].strip()
     except Exception as e:
-        logger.error(f"Error generating horoscope via OpenAI: {e}")
-        return "Failed to create horoscope, but make today unforgettable! 😊"
+        logger.error(f"Ошибка генерации гороскопа через OpenAI: {e}")
+        return "Не удалось создать гороскоп, но сделай этот день незабываемым! 😊"
 
+# Получение данных о вспышках на солнце
 def get_solar_flare_activity():
     url = f"https://api.nasa.gov/DONKI/FLR?startDate={time.strftime('%Y-%m-%d')}&api_key={NASA_API_KEY}"
     try:
@@ -145,110 +190,28 @@ def get_solar_flare_activity():
         data = response.json()
 
         if data:
-            flare_events = [f"Class {event.get('classType', 'unknown')} flare expected at {event.get('beginTime', 'unknown')}" for event in data]
+            flare_events = [f"Класс {event.get('classType', 'неизвестный')} вспышки ожидается в {event.get('beginTime', 'неизвестное время')}" for event in data]
             return flare_events if flare_events else None
         return None
     except requests.RequestException as e:
-        logger.error(f"Error fetching solar flare data: {e}")
+        logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
         return None
 
-async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Отправка прогноза солнечных вспышек
+async def send_solar_flare_forecast():
     flare_events = get_solar_flare_activity()
     if flare_events:
-        message = "Attention! Solar flares expected in the next 12 hours:\n" + "\n".join(flare_events)
+        message = "Внимание! Вспышки на солнце ожидаются в ближайшие 12 часов:\n" + "\n".join(flare_events)
     else:
-        message = "No solar flares expected in the next 12 hours."
-    await update.message.reply_text(message)
+        message = "В ближайшие 12 часов вспышек на солнце не ожидается."
 
-async def send_morning_forecast():
-    for chat_id, coords in monitoring_chats.items():
-        if coords:
-            lat, lon = coords
-            temp = get_temperature(lat, lon)
-            if temp is not None:
-                forecast_data = [f"Current temperature: {temp}°C"]
-                forecast_entries = get_forecast(lat, lon)
-                if forecast_entries:
-                    forecast_data.extend(forecast_entries)
+    for chat_id in monitoring_chats.keys():
+        try:
+            await application.bot.send_message(chat_id=chat_id, text=message)
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
-                forecast = generate_funny_forecast_with_openai(forecast_data)
-                forecast_message = f"Current air temperature: {temp}°C\n{forecast}"
-                forecast_message = escape(forecast_message)
-                try:
-                    await application.bot.send_message(chat_id=chat_id, text=forecast_message, parse_mode="HTML")
-                except Exception as e:
-                    logger.error(f"Failed to send forecast to user {chat_id}: {e}")
-
-async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if chat_id in chat_location:
-        lat, lon = chat_location[chat_id]
-        temp = get_temperature(lat, lon)
-        forecast_data = get_forecast(lat, lon)
-        if forecast_data is not None:
-            forecast = generate_funny_forecast_with_openai(forecast_data)
-            forecast_message = f"Current air temperature: {temp}°C\n{forecast}"
-            forecast_message = escape(forecast_message)
-            await update.message.reply_text(forecast_message, parse_mode="HTML")
-        else:
-            await update.message.reply_text("Failed to get forecast data.")
-    else:
-        await update.message.reply_text("Location not sent. Please send your location first.")
-
-async def send_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if chat_id in user_signs:
-        sign = user_signs[chat_id]
-        horoscope = generate_horoscope_with_openai(sign)
-        horoscope_message = f"Your horoscope for today ({sign.title()}):\n{horoscope}"
-        horoscope_message = escape(horoscope_message)
-        await update.message.reply_text(horoscope_message, parse_mode="HTML")
-    else:
-        await update.message.reply_text("You haven't set your zodiac sign yet. Please use /sign <your_sign> to set it.")
-
-async def set_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if context.args:
-        sign_name = context.args[0].lower()
-        zodiac_signs = ['овен', 'телец', 'близнецы', 'рак', 'лев', 'дева',
-                        'весы', 'скорпион', 'стрелец', 'козерог', 'водолей', 'рыбы']
-
-        if sign_name in zodiac_signs:
-            user_signs[chat_id] = sign_name
-            await update.message.reply_text(f"Your zodiac sign is set as {sign_name.title()}.")
-        else:
-            await update.message.reply_text("Invalid zodiac sign. Please enter one of the 12 zodiac signs.")
-    else:
-        await update.message.reply_text("Please specify your zodiac sign using /sign <your_sign>.")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    await update.message.reply_text(
-        "Bot started! Please send your location to get weather forecasts."
-    )
-    if chat_id not in monitoring_chats:
-        monitoring_chats[chat_id] = None
-
-async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if chat_id in chat_location:
-        lat, lon = chat_location[chat_id]
-        temp = get_temperature(lat, lon)
-        if temp is not None:
-            await update.message.reply_text(f"Current air temperature: {temp}°C")
-        else:
-            await update.message.reply_text("Failed to get temperature data.")
-    else:
-        await update.message.reply_text("Location not sent. Please send your location first.")
-
-async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    temperature = get_water_temperature()
-    if temperature is not None:
-        await update.message.reply_text(f"Water temperature in Budva: {temperature}°C")
-    else:
-        await update.message.reply_text("Failed to get water temperature.")
-
+# Обработчик локации пользователя
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if update.message.location:
@@ -256,32 +219,35 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lon = update.message.location.longitude
         chat_location[chat_id] = (lat, lon)
         monitoring_chats[chat_id] = (lat, lon)
-        await update.message.reply_text("Location received! You will now receive morning weather forecasts.")
+        save_location_to_db(chat_id, lat, lon)
+        await update.message.reply_text("Локация принята! Теперь вы будете получать утренние прогнозы.")
     else:
-        await update.message.reply_text("Failed to get your location. Please try again.")
+        await update.message.reply_text("Не удалось получить локацию. Попробуйте снова.")
 
-application.add_handler(CommandHandler('start', start))
-application.add_handler(CommandHandler('temp', temp))
-application.add_handler(CommandHandler('forecast', send_forecast))
-application.add_handler(CommandHandler('water', water))
-application.add_handler(CommandHandler('solarflare', send_solar_flare_forecast))
-application.add_handler(MessageHandler(filters.LOCATION, location_handler))
-application.add_handler(CommandHandler('sign', set_sign))
-application.add_handler(CommandHandler('horoscope', send_horoscope))
+# Загрузка всех сохраненных данных о пользователях
+monitoring_chats = load_all_locations()
+chat_location = monitoring_chats.copy()
 
+# Планирование автоматических уведомлений
 def schedule_morning_forecast(time_str):
     schedule.every().day.at(time_str).do(lambda: asyncio.run(send_morning_forecast()))
 
 def schedule_water_check():
     schedule.every(60).minutes.do(check_water_temperature)
 
+def schedule_solar_flare_check():
+    schedule.every(12).hours.do(lambda: asyncio.run(send_solar_flare_forecast()))
+
+# Запуск планировщика
 def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
 
+# Главный блок программы
 if __name__ == '__main__':
     schedule_morning_forecast("08:00")
     schedule_water_check()
+    schedule_solar_flare_check()
     threading.Thread(target=run_scheduler, daemon=True).start()
     application.run_polling()
