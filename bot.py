@@ -211,6 +211,81 @@ async def send_solar_flare_forecast():
         except Exception as e:
             logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
+# Обработчик команды /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    await update.message.reply_text(
+        "Бот запущен! Пожалуйста, отправьте свою локацию для получения прогноза погоды."
+    )
+    if chat_id not in monitoring_chats:
+        monitoring_chats[chat_id] = None
+
+# Обработчик команды /temp
+async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in chat_location:
+        lat, lon = chat_location[chat_id]
+        temp = get_temperature(lat, lon)
+        if temp is not None:
+            await update.message.reply_text(f"Текущая температура воздуха: {temp}°C")
+        else:
+            await update.message.reply_text("Не удалось получить данные о температуре.")
+    else:
+        await update.message.reply_text("Локация не отправлена. Пожалуйста, сначала отправьте свою локацию.")
+
+# Обработчик команды /water
+async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    temperature = get_water_temperature()
+    if temperature is not None:
+        await update.message.reply_text(f"Температура воды в Будве: {temperature}°C")
+    else:
+        await update.message.reply_text("Не удалось получить данные о температуре воды.")
+
+# Обработчик команды /forecast
+async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in chat_location:
+        lat, lon = chat_location[chat_id]
+        temp = get_temperature(lat, lon)
+        forecast_data = get_forecast(lat, lon)
+        if forecast_data is not None:
+            forecast = generate_funny_forecast_with_openai(forecast_data)
+            forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
+            forecast_message = escape(forecast_message)
+            await update.message.reply_text(forecast_message, parse_mode="HTML")
+        else:
+            await update.message.reply_text("Не удалось получить данные о прогнозе.")
+    else:
+        await update.message.reply_text("Локация не отправлена. Пожалуйста, сначала отправьте свою локацию.")
+
+# Обработчик команды /horoscope
+async def send_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in user_signs:
+        sign = user_signs[chat_id]
+        horoscope = generate_horoscope_with_openai(sign)
+        horoscope_message = f"Ваш гороскоп на сегодня ({sign.title()}):\n{horoscope}"
+        horoscope_message = escape(horoscope_message)
+        await update.message.reply_text(horoscope_message, parse_mode="HTML")
+    else:
+        await update.message.reply_text("Вы еще не установили свой знак зодиака. Пожалуйста, используйте /sign <ваш_знак> для установки.")
+
+# Обработчик команды /sign
+async def set_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if context.args:
+        sign_name = context.args[0].lower()
+        zodiac_signs = ['овен', 'телец', 'близнецы', 'рак', 'лев', 'дева',
+                        'весы', 'скорпион', 'стрелец', 'козерог', 'водолей', 'рыбы']
+
+        if sign_name in zodiac_signs:
+            user_signs[chat_id] = sign_name
+            await update.message.reply_text(f"Ваш знак зодиака установлен как {sign_name.title()}.")
+        else:
+            await update.message.reply_text("Некорректный знак зодиака. Пожалуйста, введите один из 12 знаков зодиака.")
+    else:
+        await update.message.reply_text("Пожалуйста, укажите ваш знак зодиака используя /sign <ваш_знак>.")
+
 # Обработчик локации пользователя
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -227,6 +302,16 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Загрузка всех сохраненных данных о пользователях
 monitoring_chats = load_all_locations()
 chat_location = monitoring_chats.copy()
+
+# Регистрация всех хэндлеров
+application.add_handler(CommandHandler('start', start))
+application.add_handler(CommandHandler('temp', temp))
+application.add_handler(CommandHandler('forecast', send_forecast))
+application.add_handler(CommandHandler('water', water))
+application.add_handler(CommandHandler('solarflare', send_solar_flare_forecast))
+application.add_handler(MessageHandler(filters.LOCATION, location_handler))
+application.add_handler(CommandHandler('sign', set_sign))
+application.add_handler(CommandHandler('horoscope', send_horoscope))
 
 # Планирование автоматических уведомлений
 def schedule_morning_forecast(time_str):
