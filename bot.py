@@ -2,7 +2,6 @@ import requests
 import schedule
 import time
 import logging
-import datetime
 from decouple import config
 from telegram import Update, Bot
 from telegram.ext import (
@@ -13,21 +12,18 @@ from telegram.ext import (
     filters,
 )
 import threading
-import openai
 from bs4 import BeautifulSoup
 from html import escape
-import re
 import asyncio
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import datetime
 
 # Настройки для подключения к API и боту
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
 API_KEY = config('OPENWEATHERMAP_API_KEY')
-OPENAI_API_KEY = config('OPENAI_API_KEY')
 NASA_API_KEY = config('NASA_API_KEY')
 
-openai.api_key = OPENAI_API_KEY
 bot = Bot(token=TELEGRAM_TOKEN)
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -42,7 +38,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 chat_location = {}
 monitoring_chats = {}
 previous_temperature = None
-user_signs = {}
 
 # Функция для подключения к базе данных
 def get_db_connection():
@@ -67,19 +62,6 @@ def save_location_to_db(chat_id, lat, lon):
     cursor.close()
     conn.close()
 
-# Сохранение знака зодиака пользователя в базе данных
-def save_user_sign_to_db(chat_id, sign):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO user_signs (chat_id, sign) VALUES (%s, %s) "
-        "ON CONFLICT (chat_id) DO UPDATE SET sign = %s",
-        (chat_id, sign, sign)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-
 # Загрузка всех локаций пользователей из базы данных при старте
 def load_all_locations():
     conn = get_db_connection()
@@ -89,16 +71,6 @@ def load_all_locations():
     cursor.close()
     conn.close()
     return {row['chat_id']: (row['latitude'], row['longitude']) for row in locations}
-
-# Загрузка всех знаков зодиака пользователей из базы данных при старте
-def load_all_user_signs():
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute("SELECT chat_id, sign FROM user_signs")
-    signs = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return {row['chat_id']: row['sign'] for row in signs}
 
 # Функция для получения температуры воды
 def get_water_temperature():
@@ -175,23 +147,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id not in monitoring_chats:
         monitoring_chats[chat_id] = None
 
-# Обработчик команды /sign
-async def set_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if context.args:
-        sign_name = context.args[0].lower()
-        zodiac_signs = ['овен', 'телец', 'близнецы', 'рак', 'лев', 'дева',
-                        'весы', 'скорпион', 'стрелец', 'козерог', 'водолей', 'рыбы']
-
-        if sign_name in zodiac_signs:
-            user_signs[chat_id] = sign_name
-            save_user_sign_to_db(chat_id, sign_name)
-            await update.message.reply_text(f"Ваш знак зодиака установлен как {sign_name.title()}.")
-        else:
-            await update.message.reply_text("Некорректный знак зодиака. Пожалуйста, введите один из 12 знаков зодиака.")
-    else:
-        await update.message.reply_text("Пожалуйста, укажите ваш знак зодиака используя /sign <ваш_знак>.")
-
 # Обработчик команды /temp
 async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -230,37 +185,6 @@ async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Локация не отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
-# Обработчик команды /horoscope
-async def send_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if chat_id in user_signs:
-        sign = user_signs[chat_id]
-        horoscope = generate_horoscope_with_openai(sign)
-        horoscope_message = f"Ваш гороскоп на сегодня ({sign.title()}):\n{horoscope}"
-        horoscope_message = escape(horoscope_message)
-        await update.message.reply_text(horoscope_message, parse_mode="HTML")
-    else:
-        await update.message.reply_text("Вы еще не установили свой знак зодиака. Пожалуйста, используйте /sign <ваш_знак> для установки.")
-
-# Функция для генерации гороскопа с использованием OpenAI
-def generate_horoscope_with_openai(sign):
-    messages = [
-        {"role": "system", "content": "You are an astrologer who writes daily horoscopes. Write in Russian with humor and emojis."},
-        {"role": "user", "content": f"Write a horoscope for today for the zodiac sign {sign}."}
-    ]
-
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            max_tokens=300,
-            temperature=0.7
-        )
-        return response['choices'][0]['message']['content'].strip()
-    except Exception as e:
-        logger.error(f"Ошибка генерации гороскопа через OpenAI: {e}")
-        return "Не удалось создать гороскоп, но сделай этот день незабываемым! 😊"
-
 # Обработчик команды /solarflare
 async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flare_events = get_solar_flare_activity()
@@ -282,7 +206,7 @@ def get_solar_flare_activity():
 
         if data:
             flare_events = []
-            now = datetime.datetime.now(datetime.timezone.utc)  # Теперь 'now' является "осведомленным"
+            now = datetime.datetime.now(datetime.timezone.utc)
             twelve_hours_later = now + datetime.timedelta(hours=12)
             for event in data:
                 class_type = event.get('classType', 'неизвестный')
@@ -292,7 +216,8 @@ def get_solar_flare_activity():
                 try:
                     begin_time_iso = begin_time.replace('Z', '+00:00')
                     dt_begin = datetime.datetime.fromisoformat(begin_time_iso)
-                except Exception:
+                except ValueError as e:
+                    logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
                     dt_begin = None
 
                 # Проверка, находится ли вспышка в ближайшие 12 часов
@@ -321,6 +246,7 @@ def get_solar_flare_activity():
         logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
         return None
 
+# Отправка прогноза солнечных вспышек всем пользователям
 async def send_solar_flare_forecast_to_all_users():
     flare_events = get_solar_flare_activity()
     if flare_events:
@@ -348,15 +274,12 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Загрузка всех сохраненных данных о пользователях
 monitoring_chats = load_all_locations()
 chat_location = monitoring_chats.copy()
-user_signs = load_all_user_signs()
 
 # Регистрация всех хэндлеров
 application.add_handler(CommandHandler('start', start))
-application.add_handler(CommandHandler('sign', set_sign))
 application.add_handler(CommandHandler('temp', temp))
 application.add_handler(CommandHandler('water', water))
 application.add_handler(CommandHandler('forecast', send_forecast))
-application.add_handler(CommandHandler('horoscope', send_horoscope))
 application.add_handler(CommandHandler('solarflare', send_solar_flare_forecast))
 application.add_handler(MessageHandler(filters.LOCATION, location_handler))
 
@@ -366,9 +289,6 @@ def schedule_morning_forecast(time_str):
 
 def schedule_water_check():
     schedule.every(60).minutes.do(check_water_temperature)
-
-def schedule_solar_flare_check():
-    schedule.every(12).hours.do(lambda: asyncio.run(send_solar_flare_forecast()))
 
 def schedule_solar_flare_check():
     schedule.every(12).hours.do(lambda: asyncio.run(send_solar_flare_forecast_to_all_users()))
@@ -381,7 +301,7 @@ def run_scheduler():
 
 # Главный блок программы
 if __name__ == '__main__':
-    schedule_morning_forecast("08:00")
+    # schedule_morning_forecast("08:00")  # Если у вас есть функция send_morning_forecast
     schedule_water_check()
     schedule_solar_flare_check()
     threading.Thread(target=run_scheduler, daemon=True).start()
