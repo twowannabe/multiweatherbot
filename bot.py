@@ -122,6 +122,28 @@ def get_water_temperature():
         logger.error(f"Ошибка получения температуры воды: {e}")
         return None
 
+# Функция для получения температуры воздуха по координатам
+def get_temperature(lat, lon):
+    url = f'http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
+    response = requests.get(url)
+    data = response.json()
+
+    if response.status_code == 200 and 'main' in data and 'temp' in data['main']:
+        return data['main']['temp']
+    logger.error(f"Ошибка получения данных о температуре: {response.status_code}")
+    return None
+
+# Функция для получения прогноза погоды
+def get_forecast(lat, lon):
+    url = f'http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
+    response = requests.get(url)
+    data = response.json()
+
+    if response.status_code == 200:
+        return [f"{entry['dt_txt']}: {entry['main']['temp']}°C, {entry['weather'][0]['description']}" for entry in data['list'][:4]]
+    logger.error(f"Ошибка получения прогноза: {response.status_code}")
+    return None
+
 # Проверка изменения температуры воды
 def check_water_temperature():
     global previous_temperature
@@ -198,7 +220,7 @@ async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         temp = get_temperature(lat, lon)
         forecast_data = get_forecast(lat, lon)
         if forecast_data is not None:
-            forecast = generate_funny_forecast_with_openai(forecast_data)
+            forecast = "\n".join(forecast_data)
             forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
             forecast_message = escape(forecast_message)
             await update.message.reply_text(forecast_message, parse_mode="HTML")
@@ -219,6 +241,25 @@ async def send_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Вы еще не установили свой знак зодиака. Пожалуйста, используйте /sign <ваш_знак> для установки.")
 
+# Функция для генерации гороскопа с использованием OpenAI
+def generate_horoscope_with_openai(sign):
+    messages = [
+        {"role": "system", "content": "You are an astrologer who writes daily horoscopes. Write in Russian with humor and emojis."},
+        {"role": "user", "content": f"Write a horoscope for today for the zodiac sign {sign}."}
+    ]
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.7
+        )
+        return response['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        logger.error(f"Ошибка генерации гороскопа через OpenAI: {e}")
+        return "Не удалось создать гороскоп, но сделай этот день незабываемым! 😊"
+
 # Обработчик команды /solarflare
 async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flare_events = get_solar_flare_activity()
@@ -227,6 +268,22 @@ async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAUL
     else:
         message = "В ближайшие 12 часов вспышек на солнце не ожидается."
     await update.message.reply_text(message)
+
+# Функция для получения данных о солнечных вспышках
+def get_solar_flare_activity():
+    url = f"https://api.nasa.gov/DONKI/FLR?startDate={time.strftime('%Y-%m-%d')}&api_key={NASA_API_KEY}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+        if data:
+            flare_events = [f"Класс {event.get('classType', 'неизвестный')} вспышки ожидается в {event.get('beginTime', 'неизвестное время')}" for event in data]
+            return flare_events if flare_events else None
+        return None
+    except requests.RequestException as e:
+        logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
+        return None
 
 # Обработчик локации пользователя
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
