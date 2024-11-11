@@ -2,6 +2,7 @@ import requests
 import schedule
 import time
 import logging
+import datetime
 from decouple import config
 from telegram import Update, Bot
 from telegram.ext import (
@@ -264,10 +265,12 @@ def generate_horoscope_with_openai(sign):
 async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     flare_events = get_solar_flare_activity()
     if flare_events:
-        message = "Внимание! Вспышки на солнце ожидаются в ближайшие 12 часов:\n" + "\n".join(flare_events)
+        message = "Внимание! Солнечные вспышки ожидаются в ближайшие 12 часов:\n" + "\n".join(flare_events)
     else:
         message = "В ближайшие 12 часов вспышек на солнце не ожидается."
-    await update.message.reply_text(message)
+    # Экранируем сообщение для режима HTML
+    message = escape(message)
+    await update.message.reply_text(message, parse_mode="HTML")
 
 # Функция для получения данных о солнечных вспышках
 def get_solar_flare_activity():
@@ -278,12 +281,56 @@ def get_solar_flare_activity():
         data = response.json()
 
         if data:
-            flare_events = [f"Класс {event.get('classType', 'неизвестный')} вспышки ожидается в {event.get('beginTime', 'неизвестное время')}" for event in data]
+            flare_events = []
+            now = datetime.datetime.utcnow()
+            twelve_hours_later = now + datetime.timedelta(hours=12)
+            for event in data:
+                class_type = event.get('classType', 'неизвестный')
+                begin_time = event.get('beginTime', 'неизвестное время')
+
+                # Парсинг времени начала вспышки
+                try:
+                    begin_time_iso = begin_time.replace('Z', '+00:00')
+                    dt_begin = datetime.datetime.fromisoformat(begin_time_iso)
+                except Exception:
+                    dt_begin = None
+
+                # Проверка, находится ли вспышка в ближайшие 12 часов
+                if dt_begin and now <= dt_begin <= twelve_hours_later:
+                    # Определение интенсивности и эмодзи
+                    if class_type.startswith('A') or class_type.startswith('B'):
+                        intensity = 'низкая'
+                        emoji = '🟢'  # Зеленый круг
+                    elif class_type.startswith('C'):
+                        intensity = 'средняя'
+                        emoji = '🟡'  # Желтый круг
+                    elif class_type.startswith('M') or class_type.startswith('X'):
+                        intensity = 'высокая'
+                        emoji = '🔴'  # Красный круг
+                    else:
+                        intensity = 'неизвестная'
+                        emoji = '⚪'  # Белый круг
+
+                    begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M UTC')
+
+                    flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) ожидается в {begin_time_formatted}"
+                    flare_events.append(flare_event)
             return flare_events if flare_events else None
         return None
     except requests.RequestException as e:
         logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
         return None
+
+async def send_solar_flare_forecast_to_all_users():
+    flare_events = get_solar_flare_activity()
+    if flare_events:
+        message = "Внимание! Солнечные вспышки ожидаются в ближайшие 12 часов:\n" + "\n".join(flare_events)
+        message = escape(message)
+        for chat_id in monitoring_chats.keys():
+            try:
+                await application.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            except Exception as e:
+                logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
 # Обработчик локации пользователя
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -322,6 +369,9 @@ def schedule_water_check():
 
 def schedule_solar_flare_check():
     schedule.every(12).hours.do(lambda: asyncio.run(send_solar_flare_forecast()))
+
+def schedule_solar_flare_check():
+    schedule.every(12).hours.do(lambda: asyncio.run(send_solar_flare_forecast_to_all_users()))
 
 # Запуск планировщика
 def run_scheduler():
