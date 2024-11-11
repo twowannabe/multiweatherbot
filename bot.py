@@ -282,7 +282,7 @@ def get_solar_flare_activity():
 
         if data:
             flare_events = []
-            now = datetime.datetime.utcnow()
+            now = datetime.datetime.now(datetime.timezone.utc)  # Теперь 'now' является "осведомленным"
             twelve_hours_later = now + datetime.timedelta(hours=12)
             for event in data:
                 class_type = event.get('classType', 'неизвестный')
