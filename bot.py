@@ -19,6 +19,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import datetime
 import re
+import pytz
 
 # Настройки для подключения к API и боту
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -238,6 +239,9 @@ def get_solar_flare_activity():
             twelve_hours_ago = now - datetime.timedelta(hours=12)
             twelve_hours_later = now + datetime.timedelta(hours=12)
 
+            # Определяем временную зону GMT+1
+            gmt_plus_one = pytz.timezone('Europe/Brussels')
+
             for event in data:
                 class_type = event.get('classType', 'неизвестный')
                 begin_time = event.get('beginTime', 'неизвестное время')
@@ -246,6 +250,7 @@ def get_solar_flare_activity():
                 try:
                     begin_time_iso = begin_time.replace('Z', '+00:00')
                     dt_begin = datetime.datetime.fromisoformat(begin_time_iso)
+                    dt_begin = dt_begin.astimezone(gmt_plus_one)  # Конвертация в GMT+1
                     logger.info(f"Вспышка класса {class_type} в {dt_begin}")
                 except ValueError as e:
                     logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
@@ -260,14 +265,17 @@ def get_solar_flare_activity():
                     elif class_type.startswith('C'):
                         intensity = 'средняя'
                         emoji = '🟡'
-                    elif class_type.startswith('M') or class_type.startswith('X'):
+                    elif class_type.startswith('M'):
                         intensity = 'высокая'
+                        emoji = '🟠'  # Изменено с красного на оранжевый, так как M не является максимальной интенсивностью
+                    elif class_type.startswith('X'):
+                        intensity = 'очень высокая'
                         emoji = '🔴'
                     else:
                         intensity = 'неизвестная'
                         emoji = '⚪'
 
-                    begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M UTC')
+                    begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M %Z')
                     flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) ожидается/произошла в {begin_time_formatted}"
                     flare_events.append(flare_event)
 
