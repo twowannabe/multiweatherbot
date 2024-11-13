@@ -309,6 +309,18 @@ def get_solar_flare_activity():
         logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
         return "Ошибка получения данных о солнечных вспышках."
 
+# Отправка прогноза солнечных вспышек всем пользователям
+async def send_solar_flare_forecast_to_all_users():
+    logger.info("Автоматическая отправка уведомлений о солнечных вспышках всем пользователям")
+    flare_events = get_solar_flare_activity()
+    if flare_events:
+        for chat_id in monitoring_chats.keys():
+            try:
+                await application.bot.send_message(chat_id=chat_id, text=flare_events, parse_mode="Markdown")
+                logger.info(f"Сообщение успешно отправлено пользователю {chat_id}")
+            except Exception as e:
+                logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
+
 # Обработчик локации пользователя
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -327,6 +339,11 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 monitoring_chats = load_all_locations()
 chat_location = monitoring_chats.copy()
 
+# Логирование информации о всех пользователях в monitoring_chats
+logger.info("Список пользователей в monitoring_chats при запуске:")
+for chat_id, location in monitoring_chats.items():
+    logger.info(f"Пользователь {chat_id} с локацией: {location}")
+
 # Регистрация всех хэндлеров
 application.add_handler(CommandHandler('start', start))
 application.add_handler(CommandHandler('temp', temp))
@@ -342,6 +359,7 @@ def schedule_morning_forecast(time_str):
 def schedule_water_check():
     schedule.every(60).minutes.do(check_water_temperature)
 
+# Планирование автоматических уведомлений о солнечных вспышках
 def schedule_solar_flare_check():
     schedule.every(12).hours.do(lambda: asyncio.run(send_solar_flare_forecast_to_all_users()))
 
