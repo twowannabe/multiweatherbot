@@ -232,11 +232,11 @@ def get_solar_flare_activity():
             past_flares = []
             future_flares = []
             now = datetime.datetime.now(datetime.timezone.utc)
-            twelve_hours_ago = now - datetime.timedelta(hours=12)
-            twelve_hours_later = now + datetime.timedelta(hours=12)
 
             # Определяем временную зону GMT+1
             gmt_plus_one = pytz.timezone('Europe/Brussels')
+            today_start = now.astimezone(gmt_plus_one).replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = today_start + datetime.timedelta(days=1)
 
             for event in data:
                 class_type = event.get('classType', 'неизвестный')
@@ -252,8 +252,8 @@ def get_solar_flare_activity():
                     logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
                     dt_begin = None
 
-                # Проверка, произошла ли вспышка в период от 12 часов назад до 12 часов вперед
-                if dt_begin and twelve_hours_ago <= dt_begin <= twelve_hours_later:
+                # Проверка, произошла ли вспышка в течение текущего календарного дня
+                if dt_begin and today_start <= dt_begin <= today_end:
                     # Определение интенсивности и эмодзи
                     if class_type.startswith('A') or class_type.startswith('B'):
                         intensity = 'низкая'
@@ -288,11 +288,11 @@ def get_solar_flare_activity():
             flare_messages = []
 
             if past_flares:
-                flare_messages.append("*Произошли следующие солнечные вспышки за последние 12 часов:*")
+                flare_messages.append("*Произошли следующие солнечные вспышки за сегодняшний день:*")
                 flare_messages.extend(past_flares)
 
             if future_flares:
-                flare_messages.append("*Ожидаются следующие солнечные вспышки в ближайшие 12 часов:*")
+                flare_messages.append("*Ожидаются следующие солнечные вспышки в течение сегодняшнего дня:*")
                 flare_messages.extend(future_flares)
 
             if flare_messages:
@@ -300,8 +300,8 @@ def get_solar_flare_activity():
                 final_message = "\n".join(flare_messages)
                 return final_message
             else:
-                logger.info("Вспышки не найдены в указанном периоде (12 часов назад и 12 часов вперед)")
-                return "Вспышек на Солнце в ближайшие 12 часов и за последние 12 часов не зафиксировано."
+                logger.info("Вспышки не найдены за сегодняшний день")
+                return "Вспышек на Солнце за сегодняшний день не зафиксировано."
 
         logger.info("Нет данных о солнечных вспышках")
         return "Нет данных о солнечных вспышках."
