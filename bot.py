@@ -234,7 +234,8 @@ def get_solar_flare_activity():
         logger.info(f"Данные о солнечных вспышках получены: {data}")
 
         if data:
-            flare_events = []
+            past_flares = []
+            future_flares = []
             now = datetime.datetime.now(datetime.timezone.utc)
             twelve_hours_ago = now - datetime.timedelta(hours=12)
             twelve_hours_later = now + datetime.timedelta(hours=12)
@@ -279,26 +280,38 @@ def get_solar_flare_activity():
                     begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M')
                     begin_time_formatted += " GMT+1"
 
-                    # Определение, произошло событие или ожидается
+                    # Добавляем вспышку в правильную категорию в зависимости от времени
                     if dt_begin < now:
                         status = "произошла"
+                        flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
+                        past_flares.append(flare_event)
                     else:
                         status = "ожидается"
+                        flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
+                        future_flares.append(flare_event)
 
-                    flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
-                    flare_events.append(flare_event)
+            # Формируем итоговое сообщение
+            flare_messages = []
 
-            if flare_events:
-                return flare_events
+            if past_flares:
+                flare_messages.append("Произошли следующие солнечные вспышки за последние 12 часов:")
+                flare_messages.extend(past_flares)
+
+            if future_flares:
+                flare_messages.append("Ожидаются следующие солнечные вспышки в ближайшие 12 часов:")
+                flare_messages.extend(future_flares)
+
+            if flare_messages:
+                return "\n".join(flare_messages)
             else:
                 logger.info("Вспышки не найдены в указанном периоде (12 часов назад и 12 часов вперед)")
-                return None
+                return "Вспышек на Солнце в ближайшие 12 часов и за последние 12 часов не зафиксировано."
 
         logger.info("Нет данных о солнечных вспышках")
-        return None
+        return "Нет данных о солнечных вспышках."
     except requests.RequestException as e:
         logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
-        return None
+        return "Ошибка получения данных о солнечных вспышках."
 
 # Обработчик локации пользователя
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
