@@ -235,7 +235,9 @@ def get_solar_flare_activity():
         if data:
             flare_events = []
             now = datetime.datetime.now(datetime.timezone.utc)
+            twelve_hours_ago = now - datetime.timedelta(hours=12)
             twelve_hours_later = now + datetime.timedelta(hours=12)
+
             for event in data:
                 class_type = event.get('classType', 'неизвестный')
                 begin_time = event.get('beginTime', 'неизвестное время')
@@ -249,8 +251,8 @@ def get_solar_flare_activity():
                     logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
                     dt_begin = None
 
-                # Проверка, находится ли вспышка в ближайшие 12 часов
-                if dt_begin and now <= dt_begin <= twelve_hours_later:
+                # Проверка, произошла ли вспышка в период от 12 часов назад до 12 часов вперед
+                if dt_begin and twelve_hours_ago <= dt_begin <= twelve_hours_later:
                     # Определение интенсивности и эмодзи
                     if class_type.startswith('A') or class_type.startswith('B'):
                         intensity = 'низкая'
@@ -266,9 +268,16 @@ def get_solar_flare_activity():
                         emoji = '⚪'
 
                     begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M UTC')
-                    flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) ожидается в {begin_time_formatted}"
+                    flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) ожидается/произошла в {begin_time_formatted}"
                     flare_events.append(flare_event)
-            return flare_events if flare_events else None
+
+            if flare_events:
+                return flare_events
+            else:
+                logger.info("Вспышки не найдены в указанном периоде (12 часов назад и 12 часов вперед)")
+                return None
+
+        logger.info("Нет данных о солнечных вспышках")
         return None
     except requests.RequestException as e:
         logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
