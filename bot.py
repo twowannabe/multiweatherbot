@@ -267,7 +267,7 @@ def get_solar_flare_activity():
                         emoji = '🟡'
                     elif class_type.startswith('M'):
                         intensity = 'высокая'
-                        emoji = '🟠'  # Изменено с красного на оранжевый, так как M не является максимальной интенсивностью
+                        emoji = '🟠'
                     elif class_type.startswith('X'):
                         intensity = 'очень высокая'
                         emoji = '🔴'
@@ -275,8 +275,17 @@ def get_solar_flare_activity():
                         intensity = 'неизвестная'
                         emoji = '⚪'
 
-                    begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M %Z')
-                    flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) ожидается/произошла в {begin_time_formatted}"
+                    # Форматирование времени и замена CET на GMT+1
+                    begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M')
+                    begin_time_formatted += " GMT+1"
+
+                    # Определение, произошло событие или ожидается
+                    if dt_begin < now:
+                        status = "произошла"
+                    else:
+                        status = "ожидается"
+
+                    flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
                     flare_events.append(flare_event)
 
             if flare_events:
