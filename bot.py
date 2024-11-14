@@ -220,8 +220,16 @@ async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAUL
 
 # Функция для получения данных о солнечных вспышках
 def get_solar_flare_activity():
-    url = f"https://api.nasa.gov/DONKI/FLR?startDate={time.strftime('%Y-%m-%d')}&api_key={NASA_API_KEY}"
+    # Определение временного диапазона: вчера, сегодня и завтра
+    now = datetime.datetime.now(datetime.timezone.utc)
+    yesterday = (now - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    today = now.strftime('%Y-%m-%d')
+    tomorrow = (now + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # Запрос данных о солнечных вспышках за период с вчерашнего дня по завтрашний день включительно
+    url = f"https://api.nasa.gov/DONKI/FLR?startDate={yesterday}&endDate={tomorrow}&api_key={NASA_API_KEY}"
     logger.info(f"Запрос данных о солнечных вспышках по URL: {url}")
+
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -231,12 +239,14 @@ def get_solar_flare_activity():
         if data:
             past_flares = []
             future_flares = []
-            now = datetime.datetime.now(datetime.timezone.utc)
 
             # Определяем временную зону GMT+1
             gmt_plus_one = pytz.timezone('Europe/Brussels')
+
+            # Определяем временные рамки для фильтрации: вчера, сегодня и завтра
             today_start = now.astimezone(gmt_plus_one).replace(hour=0, minute=0, second=0, microsecond=0)
-            today_end = today_start + datetime.timedelta(days=1)
+            yesterday_start = today_start - datetime.timedelta(days=1)
+            tomorrow_end = today_start + datetime.timedelta(days=2)
 
             for event in data:
                 class_type = event.get('classType', 'неизвестный')
@@ -252,8 +262,8 @@ def get_solar_flare_activity():
                     logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
                     dt_begin = None
 
-                # Проверка, произошла ли вспышка в течение текущего календарного дня
-                if dt_begin and today_start <= dt_begin <= today_end:
+                # Проверка, произошла ли вспышка в указанный период (вчера, сегодня, завтра)
+                if dt_begin and yesterday_start <= dt_begin <= tomorrow_end:
                     # Определение интенсивности и эмодзи
                     if class_type.startswith('A') or class_type.startswith('B'):
                         intensity = 'низкая'
@@ -271,7 +281,7 @@ def get_solar_flare_activity():
                         intensity = 'неизвестная'
                         emoji = '⚪'
 
-                    # Форматирование времени и замена CET на GMT+1
+                    # Форматирование времени
                     begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M GMT+1')
 
                     # Добавляем вспышку в правильную категорию в зависимости от времени
@@ -288,11 +298,11 @@ def get_solar_flare_activity():
             flare_messages = []
 
             if past_flares:
-                flare_messages.append("*Произошли следующие солнечные вспышки за сегодняшний день:*")
+                flare_messages.append("*Произошли следующие солнечные вспышки за вчера и сегодня:*")
                 flare_messages.extend(past_flares)
 
             if future_flares:
-                flare_messages.append("*Ожидаются следующие солнечные вспышки в течение сегодняшнего дня:*")
+                flare_messages.append("*Ожидаются следующие солнечные вспышки сегодня и завтра:*")
                 flare_messages.extend(future_flares)
 
             if flare_messages:
@@ -300,8 +310,8 @@ def get_solar_flare_activity():
                 final_message = "\n".join(flare_messages)
                 return final_message
             else:
-                logger.info("Вспышки не найдены за сегодняшний день")
-                return "Вспышек на Солнце за сегодняшний день не зафиксировано."
+                logger.info("Вспышки не найдены за вчера, сегодня и завтра")
+                return "Вспышек на Солнце за вчера, сегодня и завтра не зафиксировано."
 
         logger.info("Нет данных о солнечных вспышках")
         return "Нет данных о солнечных вспышках."
