@@ -284,7 +284,7 @@ def get_solar_flare_activity():
                     # Форматирование времени
                     begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M GMT+1')
 
-                    # Добавляем вспышку в правильную категорию в зависимости от времени
+                    # Проверяем, вспышка прошедшая или ожидаемая
                     if dt_begin < now:
                         status = "произошла"
                         flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
