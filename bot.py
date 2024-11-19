@@ -243,11 +243,6 @@ def get_solar_flare_activity():
             # Определяем временную зону GMT+1
             gmt_plus_one = pytz.timezone('Europe/Brussels')
 
-            # Определяем временные рамки для фильтрации: вчера, сегодня и завтра
-            today_start = now.astimezone(gmt_plus_one).replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - datetime.timedelta(days=1)
-            tomorrow_end = today_start + datetime.timedelta(days=2)
-
             for event in data:
                 class_type = event.get('classType', 'неизвестный')
                 begin_time = event.get('beginTime', 'неизвестное время')
@@ -262,8 +257,11 @@ def get_solar_flare_activity():
                     logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
                     dt_begin = None
 
-                # Проверка, произошла ли вспышка в указанный период (вчера, сегодня, завтра)
-                if dt_begin and yesterday_start <= dt_begin <= tomorrow_end:
+                # Разделение вспышек на прошедшие и ожидаемые
+                if dt_begin:
+                    # Форматирование времени
+                    begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M GMT+1')
+
                     # Определение интенсивности и эмодзи
                     if class_type.startswith('A') or class_type.startswith('B'):
                         intensity = 'низкая'
@@ -281,15 +279,13 @@ def get_solar_flare_activity():
                         intensity = 'неизвестная'
                         emoji = '⚪'
 
-                    # Форматирование времени
-                    begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M GMT+1')
-
-                    # Проверяем, вспышка прошедшая или ожидаемая
                     if dt_begin < now:
+                        # Прошедшие вспышки
                         status = "произошла"
                         flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
                         past_flares.append(flare_event)
                     else:
+                        # Ожидаемые вспышки
                         status = "ожидается"
                         flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
                         future_flares.append(flare_event)
