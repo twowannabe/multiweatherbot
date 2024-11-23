@@ -152,7 +152,6 @@ def get_solar_flare_activity():
     # Определение временного диапазона: вчера, сегодня и завтра
     now = datetime.datetime.now(datetime.timezone.utc)
     yesterday = (now - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-    today = now.strftime('%Y-%m-%d')
     tomorrow = (now + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
     # Запрос данных о солнечных вспышках за период с вчерашнего дня по завтрашний день включительно
@@ -279,7 +278,7 @@ async def process_queue():
         finally:
             message_queue.task_done()
 
-# Обработчик команды /start
+# Обработчики команд и локации
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     logger.info(f"Команда /start от пользователя {chat_id}")
@@ -289,7 +288,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id not in monitoring_chats:
         monitoring_chats[chat_id] = None
 
-# Обработчик команды /temp
 async def temp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     logger.info(f"Команда /temp от пользователя {chat_id}")
@@ -303,7 +301,6 @@ async def temp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Локация не отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
-# Обработчик команды /water
 async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     logger.info(f"Команда /water от пользователя {chat_id}")
@@ -313,7 +310,6 @@ async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Не удалось получить данные о температуре воды.")
 
-# Обработчик команды /forecast
 async def forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     logger.info(f"Команда /forecast от пользователя {chat_id}")
@@ -321,7 +317,7 @@ async def forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lat, lon = chat_location[chat_id]
         temp = get_temperature(lat, lon)
         forecast_data = get_forecast(lat, lon)
-        if forecast_data is not None:
+        if temp is not None and forecast_data is not None:
             forecast = "\n".join(forecast_data)
             forecast_message = f"Текущая температура воздуха: {temp}°C\nПрогноз погоды:\n{forecast}"
             forecast_message = escape(forecast_message)
@@ -331,7 +327,6 @@ async def forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Локация не отправлена. Пожалуйста, сначала отправьте свою локацию.")
 
-# Обработчик команды /solarflare
 async def solarflare(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     logger.info(f"Команда /solarflare от пользователя {chat_id}")
@@ -380,19 +375,26 @@ async def send_solar_flare_forecast_to_all_users():
             await message_queue.put((chat_id, "В ближайшие 12 часов вспышек на солнце не ожидается."))
 
 # Планирование автоматических уведомлений
-def schedule_tasks():
+def schedule_tasks(application):
     # Проверка изменения температуры воды каждые 60 минут
-    schedule.every(60).minutes.do(lambda: asyncio.create_task(check_water_temperature()))
+    schedule.every(60).minutes.do(lambda: asyncio.run_coroutine_threadsafe(check_water_temperature(), application.loop))
     # Отправка прогноза всем пользователям в утреннее время (например, в 08:00)
-    schedule.every().day.at("08:00").do(lambda: asyncio.create_task(send_forecast_to_all_users()))
+    schedule.every().day.at("08:00").do(lambda: asyncio.run_coroutine_threadsafe(send_forecast_to_all_users(), application.loop))
     # Отправка уведомлений о солнечных вспышках каждые 12 часов
-    schedule.every(12).hours.do(lambda: asyncio.create_task(send_solar_flare_forecast_to_all_users()))
+    schedule.every(12).hours.do(lambda: asyncio.run_coroutine_threadsafe(send_solar_flare_forecast_to_all_users(), application.loop))
 
 # Запуск планировщика в отдельном потоке
 def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
+
+# Функция, вызываемая при старте приложения
+async def on_startup(application):
+    logger.info("Запуск фоновых задач")
+    application.create_task(process_queue())
+    schedule_tasks(application)
+    threading.Thread(target=run_scheduler, daemon=True).start()
 
 # Главный блок программы
 if __name__ == '__main__':
@@ -407,14 +409,6 @@ if __name__ == '__main__':
     for chat_id, location in monitoring_chats.items():
         logger.info(f"Пользователь {chat_id} с локацией: {location}")
 
-    # Запуск обработки очереди сообщений
-    asyncio.run(application.initialize())  # Инициализация приложения
-    asyncio.create_task(process_queue())
-
-    # Планирование задач
-    schedule_tasks()
-    threading.Thread(target=run_scheduler, daemon=True).start()
-
     # Регистрация всех хэндлеров
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('temp', temp_command))
@@ -422,6 +416,9 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('forecast', forecast))
     application.add_handler(CommandHandler('solarflare', solarflare))
     application.add_handler(MessageHandler(filters.LOCATION, location_handler))
+
+    # Регистрация функции on_startup
+    application.job_queue.run_once(lambda _: asyncio.create_task(on_startup(application)), when=0)
 
     # Запуск бота
     application.run_polling()
