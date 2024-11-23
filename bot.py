@@ -375,13 +375,15 @@ async def send_solar_flare_forecast_to_all_users():
             await message_queue.put((chat_id, "В ближайшие 12 часов вспышек на солнце не ожидается."))
 
 # Планирование автоматических уведомлений
-def schedule_tasks(application):
+def schedule_tasks():
+    # Получаем текущий активный цикл событий
+    loop = asyncio.get_running_loop()
     # Проверка изменения температуры воды каждые 60 минут
-    schedule.every(60).minutes.do(lambda: asyncio.run_coroutine_threadsafe(check_water_temperature(), application.loop))
+    schedule.every(60).minutes.do(lambda: asyncio.run_coroutine_threadsafe(check_water_temperature(), loop))
     # Отправка прогноза всем пользователям в утреннее время (например, в 08:00)
-    schedule.every().day.at("08:00").do(lambda: asyncio.run_coroutine_threadsafe(send_forecast_to_all_users(), application.loop))
+    schedule.every().day.at("08:00").do(lambda: asyncio.run_coroutine_threadsafe(send_forecast_to_all_users(), loop))
     # Отправка уведомлений о солнечных вспышках каждые 12 часов
-    schedule.every(12).hours.do(lambda: asyncio.run_coroutine_threadsafe(send_solar_flare_forecast_to_all_users(), application.loop))
+    schedule.every(12).hours.do(lambda: asyncio.run_coroutine_threadsafe(send_solar_flare_forecast_to_all_users(), loop))
 
 # Запуск планировщика в отдельном потоке
 def run_scheduler():
@@ -393,7 +395,7 @@ def run_scheduler():
 async def on_startup(application):
     logger.info("Запуск фоновых задач")
     application.create_task(process_queue())
-    schedule_tasks(application)
+    schedule_tasks()
     threading.Thread(target=run_scheduler, daemon=True).start()
 
 # Главный блок программы
@@ -418,7 +420,4 @@ if __name__ == '__main__':
     application.add_handler(MessageHandler(filters.LOCATION, location_handler))
 
     # Регистрация функции on_startup
-    application.on_startup(on_startup)
-
-    # Запуск бота
-    application.run_polling()
+    application.run_polling(on_startup=on_startup)
