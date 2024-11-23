@@ -418,7 +418,7 @@ if __name__ == '__main__':
     application.add_handler(MessageHandler(filters.LOCATION, location_handler))
 
     # Регистрация функции on_startup
-    application.job_queue.run_once(lambda _: asyncio.create_task(on_startup(application)), when=0)
+    application.on_startup(on_startup)
 
     # Запуск бота
     application.run_polling()
