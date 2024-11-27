@@ -228,24 +228,52 @@ def get_solar_flare_forecast():
         logger.error(f"Ошибка при разборе прогноза солнечных вспышек: {e}")
         return "Ошибка при разборе прогноза солнечных вспышек."
 
-# Функция для парсинга прогноза солнечных вспышек
 def parse_swpc_flare_forecast(text_data):
+    import re
     lines = text_data.splitlines()
-    forecast_data = []
+    forecast_sections = {}
+    current_section = None
     capture = False
 
-    for line in lines:
-        if "IIA. Geophysical Activity Summary" in line:
-            capture = False
-        if capture:
-            forecast_data.append(line.strip())
-        if "IB. Solar Activity Forecast" in line:
-            capture = True
+    section_titles = {
+        'A. NOAA Geomagnetic Activity Observation and Forecast': 'A. Наблюдение и прогноз геомагнитной активности NOAA',
+        'B. NOAA Solar Radiation Activity Observation and Forecast': 'B. Наблюдение и прогноз солнечной радиационной активности NOAA',
+        'C. NOAA Radio Blackout Activity and Forecast': 'C. Наблюдение и прогноз радиозатмений NOAA'
+    }
 
-    if forecast_data:
-        forecast_text = '\n'.join(forecast_data)
-        logger.info(f"Прогноз солнечной активности:\n{forecast_text}")
-        return forecast_text
+    for line in lines:
+        line = line.strip()
+        if line.startswith('#') or line == '':
+            continue  # Пропускаем комментарии и пустые строки
+        if re.match(r'^[ABC]\.', line):
+            # Начало нового раздела
+            current_section = line
+            forecast_sections[current_section] = []
+            capture = True
+            continue
+        if capture and current_section:
+            forecast_sections[current_section].append(line)
+
+    # Формируем сообщение прогноза
+    forecast_message = ''
+
+    # Извлекаем необходимые разделы
+    sections_to_include = [
+        'B. NOAA Solar Radiation Activity Observation and Forecast',
+        'C. NOAA Radio Blackout Activity and Forecast'
+    ]
+
+    for section in sections_to_include:
+        if section in forecast_sections:
+            translated_title = section_titles.get(section, section)
+            forecast_message += f"\n*{translated_title}*\n"
+            forecast_message += '\n'.join(forecast_sections[section]) + '\n'
+        else:
+            logger.warning(f"Раздел '{section}' не найден в ответе SWPC")
+
+    if forecast_message:
+        logger.info(f"Прогноз солнечной активности:\n{forecast_message}")
+        return forecast_message
     else:
         logger.warning("Данные прогноза не найдены в ответе SWPC")
         return "Нет данных о прогнозе солнечной активности."
