@@ -206,63 +206,62 @@ async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Location not sent. Please send your location first.")
 
-# Function to get solar flare forecast from SWPC
-def get_solar_flare_forecast():
+# Function to get geomagnetic forecast from SWPC
+def get_geomagnetic_forecast():
     url = "https://services.swpc.noaa.gov/text/3-day-solar-geomag-predictions.txt"
-    logger.info(f"Fetching solar flare forecast from URL: {url}")
+    logger.info(f"Fetching geomagnetic forecast from URL: {url}")
 
     try:
         response = requests.get(url)
         response.raise_for_status()
         text_data = response.text
-        logger.info("Solar flare forecast data successfully retrieved")
+        logger.info("Geomagnetic forecast data successfully retrieved")
 
         # Parse the text data
-        forecast = parse_swpc_flare_forecast(text_data)
+        forecast = parse_swpc_geomagnetic_forecast(text_data)
 
         return forecast
     except requests.RequestException as e:
-        logger.error(f"Error fetching solar flare forecast: {e}")
-        return "Error fetching solar flare forecast."
+        logger.error(f"Error fetching geomagnetic forecast: {e}")
+        return "Error fetching geomagnetic forecast."
     except Exception as e:
-        logger.error(f"Error parsing solar flare forecast: {e}")
-        return "Error parsing solar flare forecast."
+        logger.error(f"Error parsing geomagnetic forecast: {e}")
+        return "Error parsing geomagnetic forecast."
 
-# Function to parse the SWPC forecast text
-def parse_swpc_flare_forecast(text_data):
+# Function to parse the SWPC geomagnetic forecast text
+def parse_swpc_geomagnetic_forecast(text_data):
     lines = text_data.splitlines()
     forecast_data = []
     capture = False
 
     for line in lines:
-        if "solar activity forecast" in line.lower():
+        if line.strip() == '':
+            continue  # Skip empty lines
+        if "Geomagnetic Activity Forecast" in line:
             capture = True
-            forecast_data.append(line.strip())  # Add the header
+            forecast_data.append(line.strip())
             continue
         if capture:
-            if line.strip() == '':
-                # Stop after an empty line
-                break
             forecast_data.append(line.strip())
 
     if forecast_data:
         forecast_text = '\n'.join(forecast_data)
-        logger.info(f"Solar flare forecast:\n{forecast_text}")
+        logger.info(f"Geomagnetic forecast:\n{forecast_text}")
         return forecast_text
     else:
         logger.warning("Forecast data not found in SWPC response")
-        return "No solar flare forecast data found."
+        return "No geomagnetic forecast data found."
 
 # Handler for /solarflare command
-async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_geomagnetic_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Processing /solarflare command")
-    forecast = get_solar_flare_forecast()
+    forecast = get_geomagnetic_forecast()
     await update.message.reply_text(forecast)
 
-# Send solar flare forecast to all users
-async def send_solar_flare_forecast_to_all_users():
-    logger.info("Sending solar flare forecast to all users")
-    forecast = get_solar_flare_forecast()
+# Send geomagnetic forecast to all users
+async def send_geomagnetic_forecast_to_all_users():
+    logger.info("Sending geomagnetic forecast to all users")
+    forecast = get_geomagnetic_forecast()
     for chat_id in monitoring_chats.keys():
         try:
             await application.bot.send_message(chat_id=chat_id, text=forecast)
@@ -298,10 +297,10 @@ application.add_handler(CommandHandler('start', start))
 application.add_handler(CommandHandler('temp', temp))
 application.add_handler(CommandHandler('water', water))
 application.add_handler(CommandHandler('forecast', send_forecast))
-application.add_handler(CommandHandler('solarflare', send_solar_flare_forecast))
+application.add_handler(CommandHandler('solarflare', send_geomagnetic_forecast))
 application.add_handler(MessageHandler(filters.LOCATION, location_handler))
 
-# Schedule morning forecast (you can define this function if needed)
+# Schedule morning forecast (define send_forecast_to_all_users if needed)
 def schedule_morning_forecast(time_str):
     schedule.every().day.at(time_str).do(lambda: asyncio.run(send_forecast_to_all_users()))
 
@@ -309,10 +308,10 @@ def schedule_morning_forecast(time_str):
 def schedule_water_check():
     schedule.every(60).minutes.do(check_water_temperature)
 
-# Schedule solar flare forecast
-def schedule_solar_flare_check():
+# Schedule geomagnetic forecast
+def schedule_geomagnetic_forecast():
     # Send the forecast every day at 09:00
-    schedule.every().day.at("09:00").do(lambda: asyncio.run(send_solar_flare_forecast_to_all_users()))
+    schedule.every().day.at("09:00").do(lambda: asyncio.run(send_geomagnetic_forecast_to_all_users()))
 
 # Run the scheduler
 def run_scheduler():
@@ -325,6 +324,6 @@ if __name__ == '__main__':
     logger.info("Starting bot and scheduler")
     # schedule_morning_forecast("08:00")  # Uncomment if you have the send_forecast_to_all_users function
     schedule_water_check()
-    schedule_solar_flare_check()
+    schedule_geomagnetic_forecast()
     threading.Thread(target=run_scheduler, daemon=True).start()
     application.run_polling()
