@@ -209,80 +209,87 @@ async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Функция для получения прогноза солнечных вспышек
 def get_solar_flare_forecast():
     url = "https://services.swpc.noaa.gov/text/3-day-forecast.txt"
-    logger.info(f"Запрос прогноза солнечных вспышек по URL: {url}")
+    logger.info(f"Fetching solar flare forecast from URL: {url}")
 
     try:
         response = requests.get(url)
         response.raise_for_status()
         text_data = response.text
-        logger.info("Данные прогноза солнечных вспышек успешно получены")
+        logger.info("Solar flare forecast data successfully retrieved")
 
-        # Парсим текстовые данные
+        # Parse the text data
         forecast = parse_swpc_flare_forecast(text_data)
 
         return forecast
     except requests.RequestException as e:
-        logger.error(f"Ошибка получения прогноза солнечных вспышек: {e}")
-        return "Ошибка получения прогноза солнечных вспышек."
+        logger.error(f"Error fetching solar flare forecast: {e}")
+        return "Error fetching solar flare forecast."
     except Exception as e:
-        logger.error(f"Ошибка при разборе прогноза солнечных вспышек: {e}")
-        return "Ошибка при разборе прогноза солнечных вспышек."
+        logger.error(f"Error parsing solar flare forecast: {e}")
+        return "Error parsing solar flare forecast."
 
 def parse_swpc_flare_forecast(text_data):
     import re
     lines = text_data.splitlines()
     forecast_sections = {}
     current_section = None
-    capture = False
-
-    section_titles = {
-        'A. NOAA Geomagnetic Activity Observation and Forecast': 'A. Наблюдение и прогноз геомагнитной активности NOAA',
-        'B. NOAA Solar Radiation Activity Observation and Forecast': 'B. Наблюдение и прогноз солнечной радиационной активности NOAA',
-        'C. NOAA Radio Blackout Activity and Forecast': 'C. Наблюдение и прогноз радиозатмений NOAA'
-    }
 
     for line in lines:
         line = line.strip()
         if line.startswith('#') or line == '':
-            continue  # Пропускаем комментарии и пустые строки
+            continue  # Skip comments and empty lines
         if re.match(r'^[ABC]\.', line):
-            # Начало нового раздела
+            # Start of a new section
             current_section = line
             forecast_sections[current_section] = []
-            capture = True
             continue
-        if capture and current_section:
+        if current_section:
             forecast_sections[current_section].append(line)
 
-    # Формируем сообщение прогноза
+    # Build the forecast message
     forecast_message = ''
 
-    # Извлекаем необходимые разделы
-    sections_to_include = [
-        'B. NOAA Solar Radiation Activity Observation and Forecast',
-        'C. NOAA Radio Blackout Activity and Forecast'
-    ]
-
-    for section in sections_to_include:
-        if section in forecast_sections:
-            translated_title = section_titles.get(section, section)
-            forecast_message += f"\n*{translated_title}*\n"
-            forecast_message += '\n'.join(forecast_sections[section]) + '\n'
+    # Process Section B: Solar Radiation Activity
+    section_b = forecast_sections.get('B. NOAA Solar Radiation Activity Observation and Forecast', [])
+    if section_b:
+        forecast_message += "🌞 *Solar Radiation Activity Forecast*\n"
+        # Extract the S1 or greater probabilities
+        s1_prob_line = next((line for line in section_b if 'S1 or greater' in line), None)
+        rationale_index = next((i for i, line in enumerate(section_b) if 'Rationale:' in line), None)
+        if s1_prob_line and rationale_index is not None:
+            forecast_message += s1_prob_line + '\n'
+            rationale = ' '.join(section_b[rationale_index:])
+            forecast_message += rationale + '\n\n'
         else:
-            logger.warning(f"Раздел '{section}' не найден в ответе SWPC")
+            forecast_message += '\n'.join(section_b) + '\n\n'
+
+    # Process Section C: Radio Blackout Activity
+    section_c = forecast_sections.get('C. NOAA Radio Blackout Activity and Forecast', [])
+    if section_c:
+        forecast_message += "📻 *Radio Blackout Activity Forecast*\n"
+        # Extract the R1-R2 and R3 or greater probabilities
+        r1_r2_line = next((line for line in section_c if 'R1-R2' in line), None)
+        r3_line = next((line for line in section_c if 'R3 or greater' in line), None)
+        rationale_index = next((i for i, line in enumerate(section_c) if 'Rationale:' in line), None)
+        if r1_r2_line and r3_line and rationale_index is not None:
+            forecast_message += r1_r2_line + '\n' + r3_line + '\n'
+            rationale = ' '.join(section_c[rationale_index:])
+            forecast_message += rationale + '\n'
+        else:
+            forecast_message += '\n'.join(section_c) + '\n'
 
     if forecast_message:
-        logger.info(f"Прогноз солнечной активности:\n{forecast_message}")
+        logger.info(f"Solar activity forecast:\n{forecast_message}")
         return forecast_message
     else:
-        logger.warning("Данные прогноза не найдены в ответе SWPC")
-        return "Нет данных о прогнозе солнечной активности."
+        logger.warning("Forecast data not found in SWPC response")
+        return "No solar activity forecast data found."
 
 # Обработчик команды /solarflare
 async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Обработка команды /solarflare")
+    logger.info("Processing /solarflare command")
     forecast = get_solar_flare_forecast()
-    await update.message.reply_text(forecast)
+    await update.message.reply_text(forecast, parse_mode='Markdown')
 
 # Отправка прогноза солнечных вспышек всем пользователям
 async def send_solar_flare_forecast_to_all_users():
