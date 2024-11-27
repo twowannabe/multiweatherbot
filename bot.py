@@ -208,7 +208,7 @@ async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Function to get solar flare forecast from SWPC
 def get_solar_flare_forecast():
-    url = "https://services.swpc.noaa.gov/text/3-day-solar-flare-forecast.txt"
+    url = "https://services.swpc.noaa.gov/text/3-day-solar-geomag-predictions.txt"
     logger.info(f"Fetching solar flare forecast from URL: {url}")
 
     try:
