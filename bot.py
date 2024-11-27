@@ -17,14 +17,11 @@ from html import escape
 import asyncio
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import datetime
 import re
-import pytz
 
-# Настройки для подключения к API и боту
+# Configuration for API and bot
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
 API_KEY = config('OPENWEATHERMAP_API_KEY')
-NASA_API_KEY = config('NASA_API_KEY')
 
 bot = Bot(token=TELEGRAM_TOKEN)
 application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -36,14 +33,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Глобальные переменные для хранения данных пользователей
+# Global variables to store user data
 chat_location = {}
 monitoring_chats = {}
 previous_temperature = None
 
-# Функция для подключения к базе данных
+# Function to connect to the database
 def get_db_connection():
-    logger.info("Подключение к базе данных")
+    logger.info("Connecting to the database")
     return psycopg2.connect(
         host=config('DB_HOST'),
         port=config('DB_PORT'),
@@ -52,9 +49,9 @@ def get_db_connection():
         password=config('DB_PASSWORD')
     )
 
-# Сохранение локации пользователя в базе данных
+# Save user location to the database
 def save_location_to_db(chat_id, lat, lon):
-    logger.info(f"Сохранение локации пользователя {chat_id} в базе данных: {lat}, {lon}")
+    logger.info(f"Saving user {chat_id} location to the database: {lat}, {lon}")
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -66,9 +63,9 @@ def save_location_to_db(chat_id, lat, lon):
     cursor.close()
     conn.close()
 
-# Загрузка всех локаций пользователей из базы данных при старте
+# Load all user locations from the database at startup
 def load_all_locations():
-    logger.info("Загрузка всех локаций пользователей из базы данных")
+    logger.info("Loading all user locations from the database")
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT chat_id, latitude, longitude FROM user_locations")
@@ -77,13 +74,13 @@ def load_all_locations():
     conn.close()
     return {row['chat_id']: (row['latitude'], row['longitude']) for row in locations}
 
-# Функция для получения температуры воды
+# Function to get water temperature
 def get_water_temperature():
     url = 'https://world-weather.ru/pogoda/montenegro/budva/water/'
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)'
     }
-    logger.info(f"Запрос температуры воды по URL: {url}")
+    logger.info(f"Requesting water temperature from URL: {url}")
 
     try:
         response = requests.get(url, headers=headers)
@@ -96,261 +93,207 @@ def get_water_temperature():
             match = re.search(r'([-+]?\d+)', temp_text)
             if match:
                 temperature = float(match.group(1))
-                logger.info(f"Температура воды успешно получена: {temperature}°C")
+                logger.info(f"Water temperature successfully retrieved: {temperature}°C")
                 return temperature
-        logger.warning("Температура воды не найдена на странице")
+        logger.warning("Water temperature not found on the page")
         return None
     except requests.RequestException as e:
-        logger.error(f"Ошибка получения температуры воды: {e}")
+        logger.error(f"Error fetching water temperature: {e}")
         return None
 
-# Функция для получения температуры воздуха по координатам
+# Function to get air temperature by coordinates
 def get_temperature(lat, lon):
-    url = f'http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
-    logger.info(f"Запрос температуры воздуха по URL: {url}")
+    url = f'http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=en'
+    logger.info(f"Requesting air temperature from URL: {url}")
     response = requests.get(url)
     data = response.json()
 
     if response.status_code == 200 and 'main' in data and 'temp' in data['main']:
         temperature = data['main']['temp']
-        logger.info(f"Температура воздуха успешно получена: {temperature}°C")
+        logger.info(f"Air temperature successfully retrieved: {temperature}°C")
         return temperature
-    logger.error(f"Ошибка получения данных о температуре: {response.status_code}")
+    logger.error(f"Error fetching temperature data: {response.status_code}")
     return None
 
-# Функция для получения прогноза погоды
+# Function to get weather forecast
 def get_forecast(lat, lon):
-    url = f'http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
-    logger.info(f"Запрос прогноза погоды по URL: {url}")
+    url = f'http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=en'
+    logger.info(f"Requesting weather forecast from URL: {url}")
     response = requests.get(url)
     data = response.json()
 
     if response.status_code == 200:
         forecast_data = [f"{entry['dt_txt']}: {entry['main']['temp']}°C, {entry['weather'][0]['description']}" for entry in data['list'][:4]]
-        logger.info(f"Прогноз погоды успешно получен: {forecast_data}")
+        logger.info(f"Weather forecast successfully retrieved: {forecast_data}")
         return forecast_data
-    logger.error(f"Ошибка получения прогноза: {response.status_code}")
+    logger.error(f"Error fetching forecast: {response.status_code}")
     return None
 
-# Проверка изменения температуры воды
+# Check for changes in water temperature
 def check_water_temperature():
     global previous_temperature
-    logger.info("Проверка изменения температуры воды")
+    logger.info("Checking for changes in water temperature")
     current_temperature = get_water_temperature()
 
     if current_temperature is not None:
         if previous_temperature is None:
             previous_temperature = current_temperature
         elif current_temperature < previous_temperature:
-            message = f"Температура воды упала! Сейчас: {current_temperature}°C, ранее: {previous_temperature}°C."
-            logger.info("Отправка уведомления о снижении температуры воды")
+            message = f"Water temperature has dropped! Current: {current_temperature}°C, previous: {previous_temperature}°C."
+            logger.info("Sending notification about water temperature drop")
             asyncio.run(send_notification_to_all_users(message))
         previous_temperature = current_temperature
 
-# Отправка уведомлений всем пользователям
+# Send notifications to all users
 async def send_notification_to_all_users(message):
-    logger.info("Отправка уведомлений всем пользователям")
+    logger.info("Sending notifications to all users")
     for chat_id in monitoring_chats.keys():
         try:
             await application.bot.send_message(chat_id=chat_id, text=message)
-            logger.info(f"Сообщение успешно отправлено пользователю {chat_id}")
+            logger.info(f"Message successfully sent to user {chat_id}")
         except Exception as e:
-            logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
+            logger.error(f"Failed to send message to user {chat_id}: {e}")
 
-# Обработчик команды /start
+# Handler for /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    logger.info(f"Команда /start от пользователя {chat_id}")
+    logger.info(f"Received /start command from user {chat_id}")
     await update.message.reply_text(
-        "Бот запущен! Пожалуйста, отправьте свою локацию для получения прогноза погоды."
+        "Bot started! Please send your location to receive weather forecasts."
     )
     if chat_id not in monitoring_chats:
         monitoring_chats[chat_id] = None
 
-# Обработчик команды /temp
+# Handler for /temp command
 async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    logger.info(f"Команда /temp от пользователя {chat_id}")
+    logger.info(f"Received /temp command from user {chat_id}")
     if chat_id in chat_location:
         lat, lon = chat_location[chat_id]
         temp = get_temperature(lat, lon)
         if temp is not None:
-            await update.message.reply_text(f"Текущая температура воздуха: {temp}°C")
+            await update.message.reply_text(f"Current air temperature: {temp}°C")
         else:
-            await update.message.reply_text("Не удалось получить данные о температуре.")
+            await update.message.reply_text("Failed to retrieve temperature data.")
     else:
-        await update.message.reply_text("Локация не отправлена. Пожалуйста, сначала отправьте свою локацию.")
+        await update.message.reply_text("Location not sent. Please send your location first.")
 
-# Обработчик команды /water
+# Handler for /water command
 async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    logger.info(f"Команда /water от пользователя {chat_id}")
+    logger.info(f"Received /water command from user {chat_id}")
     temperature = get_water_temperature()
     if temperature is not None:
-        await update.message.reply_text(f"Температура воды в Будве: {temperature}°C")
+        await update.message.reply_text(f"Water temperature in Budva: {temperature}°C")
     else:
-        await update.message.reply_text("Не удалось получить данные о температуре воды.")
+        await update.message.reply_text("Failed to retrieve water temperature data.")
 
-# Обработчик команды /forecast
+# Handler for /forecast command
 async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    logger.info(f"Команда /forecast от пользователя {chat_id}")
+    logger.info(f"Received /forecast command from user {chat_id}")
     if chat_id in chat_location:
         lat, lon = chat_location[chat_id]
         temp = get_temperature(lat, lon)
         forecast_data = get_forecast(lat, lon)
         if forecast_data is not None:
             forecast = "\n".join(forecast_data)
-            forecast_message = f"Текущая температура воздуха: {temp}°C\n{forecast}"
+            forecast_message = f"Current air temperature: {temp}°C\n{forecast}"
             forecast_message = escape(forecast_message)
             await update.message.reply_text(forecast_message, parse_mode="HTML")
         else:
-            await update.message.reply_text("Не удалось получить данные о прогнозе.")
+            await update.message.reply_text("Failed to retrieve forecast data.")
     else:
-        await update.message.reply_text("Локация не отправлена. Пожалуйста, сначала отправьте свою локацию.")
+        await update.message.reply_text("Location not sent. Please send your location first.")
 
-# Обработчик команды /solarflare для отправки сообщения пользователю
-async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Обработка команды /solarflare")
-    flare_events = get_solar_flare_activity()
-    if flare_events:
-        await update.message.reply_text(flare_events, parse_mode="Markdown")
-    else:
-        await update.message.reply_text("В ближайшие 12 часов вспышек на солнце не ожидается.")
-
-# Функция для получения данных о солнечных вспышках
-def get_solar_flare_activity():
-    # Определение временного диапазона: вчера, сегодня и завтра
-    now = datetime.datetime.now(datetime.timezone.utc)
-    yesterday = (now - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-    today = now.strftime('%Y-%m-%d')
-    tomorrow = (now + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-
-    # Запрос данных о солнечных вспышках за период с вчерашнего дня по завтрашний день включительно
-    url = f"https://api.nasa.gov/DONKI/FLR?startDate={yesterday}&endDate={tomorrow}&api_key={NASA_API_KEY}"
-    logger.info(f"Запрос данных о солнечных вспышках по URL: {url}")
+# Function to get solar flare forecast from SWPC
+def get_solar_flare_forecast():
+    url = "https://services.swpc.noaa.gov/text/3-day-solar-flare-forecast.txt"
+    logger.info(f"Fetching solar flare forecast from URL: {url}")
 
     try:
         response = requests.get(url)
         response.raise_for_status()
-        data = response.json()
-        logger.info(f"Данные о солнечных вспышках получены: {data}")
+        text_data = response.text
+        logger.info("Solar flare forecast data successfully retrieved")
 
-        if data:
-            past_flares = []
-            future_flares = []
+        # Parse the text data
+        forecast = parse_swpc_flare_forecast(text_data)
 
-            # Определяем временную зону GMT+1
-            gmt_plus_one = pytz.timezone('Europe/Brussels')
-
-            for event in data:
-                class_type = event.get('classType', 'неизвестный')
-                begin_time = event.get('beginTime', 'неизвестное время')
-
-                # Парсинг времени начала вспышки
-                try:
-                    begin_time_iso = begin_time.replace('Z', '+00:00')
-                    dt_begin = datetime.datetime.fromisoformat(begin_time_iso)
-                    dt_begin = dt_begin.astimezone(gmt_plus_one)  # Конвертация в GMT+1
-                    logger.info(f"Вспышка класса {class_type} в {dt_begin}")
-                except ValueError as e:
-                    logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
-                    dt_begin = None
-
-                # Разделение вспышек на прошедшие и ожидаемые
-                if dt_begin:
-                    # Форматирование времени
-                    begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M GMT+1')
-
-                    # Определение интенсивности и эмодзи
-                    if class_type.startswith('A') or class_type.startswith('B'):
-                        intensity = 'низкая'
-                        emoji = '🟢'
-                    elif class_type.startswith('C'):
-                        intensity = 'средняя'
-                        emoji = '🟡'
-                    elif class_type.startswith('M'):
-                        intensity = 'высокая'
-                        emoji = '🟠'
-                    elif class_type.startswith('X'):
-                        intensity = 'очень высокая'
-                        emoji = '🔴'
-                    else:
-                        intensity = 'неизвестная'
-                        emoji = '⚪'
-
-                    if dt_begin < now:
-                        # Прошедшие вспышки
-                        status = "произошла"
-                        flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
-                        past_flares.append(flare_event)
-                    else:
-                        # Ожидаемые вспышки
-                        status = "ожидается"
-                        flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
-                        future_flares.append(flare_event)
-
-            # Формируем итоговое сообщение
-            flare_messages = []
-
-            if past_flares:
-                flare_messages.append("*Произошли следующие солнечные вспышки за вчера и сегодня:*")
-                flare_messages.extend(past_flares)
-
-            if future_flares:
-                flare_messages.append("*Ожидаются следующие солнечные вспышки сегодня и завтра:*")
-                flare_messages.extend(future_flares)
-
-            if flare_messages:
-                # Соединяем все части сообщения
-                final_message = "\n".join(flare_messages)
-                return final_message
-            else:
-                logger.info("Вспышки не найдены за вчера, сегодня и завтра")
-                return "Вспышек на Солнце за вчера, сегодня и завтра не зафиксировано."
-
-        logger.info("Нет данных о солнечных вспышках")
-        return "Нет данных о солнечных вспышках."
+        return forecast
     except requests.RequestException as e:
-        logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
-        return "Ошибка получения данных о солнечных вспышках."
+        logger.error(f"Error fetching solar flare forecast: {e}")
+        return "Error fetching solar flare forecast."
+    except Exception as e:
+        logger.error(f"Error parsing solar flare forecast: {e}")
+        return "Error parsing solar flare forecast."
 
-# Отправка прогноза солнечных вспышек всем пользователям
+# Function to parse the SWPC forecast text
+def parse_swpc_flare_forecast(text_data):
+    lines = text_data.splitlines()
+    forecast_data = []
+    capture = False
+
+    for line in lines:
+        if "solar activity forecast" in line.lower():
+            capture = True
+            forecast_data.append(line.strip())  # Add the header
+            continue
+        if capture:
+            if line.strip() == '':
+                # Stop after an empty line
+                break
+            forecast_data.append(line.strip())
+
+    if forecast_data:
+        forecast_text = '\n'.join(forecast_data)
+        logger.info(f"Solar flare forecast:\n{forecast_text}")
+        return forecast_text
+    else:
+        logger.warning("Forecast data not found in SWPC response")
+        return "No solar flare forecast data found."
+
+# Handler for /solarflare command
+async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Processing /solarflare command")
+    forecast = get_solar_flare_forecast()
+    await update.message.reply_text(forecast)
+
+# Send solar flare forecast to all users
 async def send_solar_flare_forecast_to_all_users():
-    logger.info("Автоматическая отправка уведомлений о солнечных вспышках всем пользователям")
-    flare_events = get_solar_flare_activity()
-    if flare_events:
-        for chat_id in monitoring_chats.keys():
-            try:
-                await application.bot.send_message(chat_id=chat_id, text=flare_events, parse_mode="Markdown")
-                logger.info(f"Сообщение успешно отправлено пользователю {chat_id}")
-            except Exception as e:
-                logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
+    logger.info("Sending solar flare forecast to all users")
+    forecast = get_solar_flare_forecast()
+    for chat_id in monitoring_chats.keys():
+        try:
+            await application.bot.send_message(chat_id=chat_id, text=forecast)
+            logger.info(f"Forecast successfully sent to user {chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to send forecast to user {chat_id}: {e}")
 
-# Обработчик локации пользователя
+# Handler for user location
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    logger.info(f"Получена локация от пользователя {chat_id}")
+    logger.info(f"Received location from user {chat_id}")
     if update.message.location:
         lat = update.message.location.latitude
         lon = update.message.location.longitude
         chat_location[chat_id] = (lat, lon)
         monitoring_chats[chat_id] = (lat, lon)
         save_location_to_db(chat_id, lat, lon)
-        await update.message.reply_text("Локация принята! Теперь вы будете получать утренние прогнозы.")
+        await update.message.reply_text("Location accepted! You will now receive morning forecasts.")
     else:
-        await update.message.reply_text("Не удалось получить локацию. Попробуйте снова.")
+        await update.message.reply_text("Failed to receive location. Please try again.")
 
-# Загрузка всех сохраненных данных о пользователях
+# Load all saved user data
 monitoring_chats = load_all_locations()
 chat_location = monitoring_chats.copy()
 
-# Логирование информации о всех пользователях в monitoring_chats
-logger.info("Список пользователей в monitoring_chats при запуске:")
+# Log information about all users in monitoring_chats
+logger.info("List of users in monitoring_chats at startup:")
 for chat_id, location in monitoring_chats.items():
-    logger.info(f"Пользователь {chat_id} с локацией: {location}")
+    logger.info(f"User {chat_id} with location: {location}")
 
-# Регистрация всех хэндлеров
+# Register all handlers
 application.add_handler(CommandHandler('start', start))
 application.add_handler(CommandHandler('temp', temp))
 application.add_handler(CommandHandler('water', water))
@@ -358,27 +301,29 @@ application.add_handler(CommandHandler('forecast', send_forecast))
 application.add_handler(CommandHandler('solarflare', send_solar_flare_forecast))
 application.add_handler(MessageHandler(filters.LOCATION, location_handler))
 
-# Планирование автоматических уведомлений
+# Schedule morning forecast (you can define this function if needed)
 def schedule_morning_forecast(time_str):
     schedule.every().day.at(time_str).do(lambda: asyncio.run(send_forecast_to_all_users()))
 
+# Schedule water temperature check
 def schedule_water_check():
     schedule.every(60).minutes.do(check_water_temperature)
 
-# Планирование автоматических уведомлений о солнечных вспышках
+# Schedule solar flare forecast
 def schedule_solar_flare_check():
-    schedule.every(12).hours.do(lambda: asyncio.run(send_solar_flare_forecast_to_all_users()))
+    # Send the forecast every day at 09:00
+    schedule.every().day.at("09:00").do(lambda: asyncio.run(send_solar_flare_forecast_to_all_users()))
 
-# Запуск планировщика
+# Run the scheduler
 def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-# Главный блок программы
+# Main block of the program
 if __name__ == '__main__':
-    logger.info("Запуск бота и планировщика")
-    # schedule_morning_forecast("08:00")  # Если у вас есть функция send_forecast_to_all_users
+    logger.info("Starting bot and scheduler")
+    # schedule_morning_forecast("08:00")  # Uncomment if you have the send_forecast_to_all_users function
     schedule_water_check()
     schedule_solar_flare_check()
     threading.Thread(target=run_scheduler, daemon=True).start()
