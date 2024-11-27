@@ -228,28 +228,45 @@ def get_geomagnetic_forecast():
         logger.error(f"Error parsing geomagnetic forecast: {e}")
         return "Error parsing geomagnetic forecast."
 
-# Function to parse the SWPC geomagnetic forecast text
 def parse_swpc_geomagnetic_forecast(text_data):
     lines = text_data.splitlines()
-    forecast_data = []
+    forecast_sections = {}
+    current_section = None
     capture = False
 
     for line in lines:
-        if line.strip() == '':
-            continue  # Skip empty lines
-        if "Geomagnetic Activity Forecast" in line:
+        line = line.strip()
+        if line.startswith('#') or line == '':
+            continue  # Skip comments and empty lines
+        if line.startswith(':'):
+            # Start of a new section
+            current_section = line.strip(':').split()[0]
+            forecast_sections[current_section] = []
             capture = True
-            forecast_data.append(line.strip())
             continue
-        if capture:
-            forecast_data.append(line.strip())
+        if capture and current_section:
+            forecast_sections[current_section].append(line)
 
-    if forecast_data:
-        forecast_text = '\n'.join(forecast_data)
-        logger.info(f"Geomagnetic forecast:\n{forecast_text}")
-        return forecast_text
+    # Build the forecast message
+    forecast_message = ''
+
+    # Sections to include in the message
+    sections_to_include = [
+        'Issued', 'Geomagnetic_A_indices', 'Prob_Mid', 'Prob_High', '10cm_flux', 'Whole_Disk_Flare_Prob'
+    ]
+
+    for section in sections_to_include:
+        if section in forecast_sections:
+            forecast_message += f"\n*{section.replace('_', ' ')}*\n"
+            forecast_message += '\n'.join(forecast_sections[section]) + '\n'
+        else:
+            logger.warning(f"Section '{section}' not found in SWPC response")
+
+    if forecast_message:
+        logger.info(f"Geomagnetic forecast:\n{forecast_message}")
+        return forecast_message
     else:
-        logger.warning("Forecast data not found in SWPC response")
+        logger.warning("No forecast data found in SWPC response")
         return "No geomagnetic forecast data found."
 
 # Handler for /solarflare command
