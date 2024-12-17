@@ -244,16 +244,8 @@ def get_solar_flare_activity():
             gmt_plus_one = pytz.timezone('Europe/Brussels')
 
             for event in data:
-                flrID = event.get('flrID', 'N/A')
                 class_type = event.get('classType', 'неизвестный')
-                source_location = event.get('sourceLocation', 'неизвестное местоположение')
-                active_region_num = event.get('activeRegionNum', 'N/A')
-                note = event.get('note', 'Нет заметок.')
-                link = event.get('link', 'Ссылка отсутствует.')
                 begin_time = event.get('beginTime', 'неизвестное время')
-                peak_time = event.get('peakTime', 'неизвестное время')
-                end_time = event.get('endTime', 'неизвестное время')
-                linked_events = event.get('linkedEvents', [])
 
                 # Парсинг времени начала вспышки
                 try:
@@ -265,29 +257,9 @@ def get_solar_flare_activity():
                     logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
                     dt_begin = None
 
-                # Парсинг времени пика вспышки
-                try:
-                    peak_time_iso = peak_time.replace('Z', '+00:00')
-                    dt_peak = datetime.datetime.fromisoformat(peak_time_iso)
-                    dt_peak = dt_peak.astimezone(gmt_plus_one)
-                except ValueError as e:
-                    logger.error(f"Ошибка парсинга времени пика вспышки: {e}")
-                    dt_peak = 'Неизвестно'
-
-                # Парсинг времени окончания вспышки
-                try:
-                    end_time_iso = end_time.replace('Z', '+00:00')
-                    dt_end = datetime.datetime.fromisoformat(end_time_iso)
-                    dt_end = dt_end.astimezone(gmt_plus_one)
-                except ValueError as e:
-                    logger.error(f"Ошибка парсинга времени окончания вспышки: {e}")
-                    dt_end = 'Неизвестно'
-
                 if dt_begin:
                     # Форматирование времени
                     begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M GMT+1')
-                    peak_time_formatted = dt_peak.strftime('%d.%m.%Y %H:%M GMT+1') if isinstance(dt_peak, datetime.datetime) else dt_peak
-                    end_time_formatted = dt_end.strftime('%d.%m.%Y %H:%M GMT+1') if isinstance(dt_end, datetime.datetime) else dt_end
 
                     # Определение интенсивности и эмодзи
                     if class_type.startswith('A') or class_type.startswith('B'):
@@ -307,31 +279,12 @@ def get_solar_flare_activity():
                         emoji = '⚪'
 
                     # Формирование сообщения о вспышке
-                    flare_event = (
-                        f"*ID вспышки:* `{flrID}`\n"
-                        f"{emoji} *Класс:* {class_type} ({intensity} интенсивность)\n"
-                        f"*Местоположение источника:* {source_location}\n"
-                        f"*Активный регион:* {active_region_num}\n"
-                        f"*Время начала:* {begin_time_formatted}\n"
-                        f"*Время пика:* {peak_time_formatted}\n"
-                        f"*Время окончания:* {end_time_formatted}\n"
-                        f"*Примечание:* {note}\n"
-                        f"[Подробнее]({link})\n"
-                    )
-
-                    # Обработка связанных событий, если они есть
-                    if linked_events:
-                        linked_events_info = []
-                        for linked_event in linked_events:
-                            activity_id = linked_event.get('activityID', 'N/A')
-                            linked_events_info.append(f"- {activity_id}")
-                        flare_event += "*Связанные события:*\n" + "\n".join(linked_events_info) + "\n"
-
+                    flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) произошла в {begin_time_formatted}"
                     flare_events.append(flare_event)
 
             if flare_events:
                 # Формируем итоговое сообщение
-                final_message = "*Солнечные вспышки за последние 3 дня:*\n\n" + "\n\n".join(flare_events)
+                final_message = "*Солнечные вспышки за последние 3 дня:*\n" + "\n".join(flare_events)
                 return final_message
             else:
                 logger.info("Вспышки не найдены за последние 3 дня")
