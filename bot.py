@@ -216,18 +216,19 @@ async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAUL
     if flare_events:
         await update.message.reply_text(flare_events, parse_mode="Markdown")
     else:
-        await update.message.reply_text("В ближайшие 12 часов вспышек на солнце не ожидается.")
+        await update.message.reply_text("В ближайшие 3 дня вспышек на солнце не ожидается.")
 
 # Функция для получения данных о солнечных вспышках
 def get_solar_flare_activity():
-    # Определение временного диапазона: вчера, сегодня и завтра
+    # Текущее время в UTC
     now = datetime.datetime.now(datetime.timezone.utc)
-    yesterday = (now - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    # Дата два дня назад
+    three_days_ago = (now - datetime.timedelta(days=2)).strftime('%Y-%m-%d')
+    # Сегодняшняя дата
     today = now.strftime('%Y-%m-%d')
-    tomorrow = (now + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
-    # Запрос данных о солнечных вспышках за период с вчерашнего дня по завтрашний день включительно
-    url = f"https://api.nasa.gov/DONKI/FLR?startDate={yesterday}&endDate={tomorrow}&api_key={NASA_API_KEY}"
+    # Запрос данных о солнечных вспышках за последние 3 дня
+    url = f"https://api.nasa.gov/DONKI/FLR?startDate={three_days_ago}&endDate={today}&api_key={NASA_API_KEY}"
     logger.info(f"Запрос данных о солнечных вспышках по URL: {url}")
 
     try:
@@ -237,10 +238,9 @@ def get_solar_flare_activity():
         logger.info(f"Данные о солнечных вспышках получены: {data}")
 
         if data:
-            past_flares = []
-            future_flares = []
+            flare_events = []
 
-            # Определяем временную зону GMT+1
+            # Определение временной зоны GMT+1
             gmt_plus_one = pytz.timezone('Europe/Brussels')
 
             for event in data:
@@ -257,7 +257,6 @@ def get_solar_flare_activity():
                     logger.error(f"Ошибка парсинга времени начала вспышки: {e}")
                     dt_begin = None
 
-                # Разделение вспышек на прошедшие и ожидаемые
                 if dt_begin:
                     # Форматирование времени
                     begin_time_formatted = dt_begin.strftime('%d.%m.%Y %H:%M GMT+1')
@@ -279,38 +278,21 @@ def get_solar_flare_activity():
                         intensity = 'неизвестная'
                         emoji = '⚪'
 
-                    if dt_begin < now:
-                        # Прошедшие вспышки
-                        status = "произошла"
-                        flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
-                        past_flares.append(flare_event)
-                    else:
-                        # Ожидаемые вспышки
-                        status = "ожидается"
-                        flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) {status} в {begin_time_formatted}"
-                        future_flares.append(flare_event)
+                    # Формирование сообщения о вспышке
+                    flare_event = f"{emoji} Вспышка класса {class_type} ({intensity} интенсивность) произошла в {begin_time_formatted}"
+                    flare_events.append(flare_event)
 
-            # Формируем итоговое сообщение
-            flare_messages = []
-
-            if past_flares:
-                flare_messages.append("*Произошли следующие солнечные вспышки за вчера и сегодня:*")
-                flare_messages.extend(past_flares)
-
-            if future_flares:
-                flare_messages.append("*Ожидаются следующие солнечные вспышки сегодня и завтра:*")
-                flare_messages.extend(future_flares)
-
-            if flare_messages:
-                # Соединяем все части сообщения
-                final_message = "\n".join(flare_messages)
+            if flare_events:
+                # Формируем итоговое сообщение
+                final_message = "*Солнечные вспышки за последние 3 дня:*\n" + "\n".join(flare_events)
                 return final_message
             else:
-                logger.info("Вспышки не найдены за вчера, сегодня и завтра")
-                return "Вспышек на Солнце за вчера, сегодня и завтра не зафиксировано."
-
+                logger.info("Вспышки не найдены за последние 3 дня")
+                return "Солнечных вспышек за последние 3 дня не зафиксировано."
+        
         logger.info("Нет данных о солнечных вспышках")
         return "Нет данных о солнечных вспышках."
+    
     except requests.RequestException as e:
         logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
         return "Ошибка получения данных о солнечных вспышках."
