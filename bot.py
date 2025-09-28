@@ -22,7 +22,6 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import datetime
 import re
-import pytz
 from zoneinfo import ZoneInfo
 
 application = Application.builder().token(TELEGRAM_TOKEN).build()
