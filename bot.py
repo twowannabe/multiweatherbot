@@ -35,8 +35,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # Создаём JobQueue с таймзоной Europe/Moscow
-job_queue = application.job_queue
-application.job_queue = job_queue
+# job_queue = application.job_queue
+# application.job_queue = job_queue
 job_queue.start()
 
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -236,11 +236,12 @@ async def send_solar_flare_forecast_to_all_users():
 # ---------------------- Планирование через JobQueue ----------------------
 job_queue.run_repeating(
     check_water_temperature,
-    interval=60*60,
+    interval=60*60,  # каждые 60 минут
     first=0,
     name="water_check",
     job_kwargs={"tzinfo": ZoneInfo("Europe/Moscow")}
 )
+
 job_queue.run_repeating(
     lambda ctx: asyncio.create_task(send_solar_flare_forecast_to_all_users()),
     interval=12*60*60,
