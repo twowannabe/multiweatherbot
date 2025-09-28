@@ -35,7 +35,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # Создаём JobQueue с таймзоной Europe/Moscow
-job_queue = JobQueue(timezone=ZoneInfo("Europe/Moscow"))
+job_queue = application.job_queue
 application.job_queue = job_queue
 job_queue.start()
 
@@ -234,8 +234,20 @@ async def send_solar_flare_forecast_to_all_users():
             logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
 # ---------------------- Планирование через JobQueue ----------------------
-job_queue.run_repeating(lambda ctx: check_water_temperature(), interval=60*60, first=0)
-job_queue.run_repeating(lambda ctx: asyncio.create_task(send_solar_flare_forecast_to_all_users()), interval=12*60*60, first=0)
+job_queue.run_repeating(
+    check_water_temperature,
+    interval=60*60,
+    first=0,
+    name="water_check",
+    job_kwargs={"tzinfo": ZoneInfo("Europe/Moscow")}
+)
+job_queue.run_repeating(
+    lambda ctx: asyncio.create_task(send_solar_flare_forecast_to_all_users()),
+    interval=12*60*60,
+    first=0,
+    name="solar_check",
+    job_kwargs={"tzinfo": ZoneInfo("Europe/Moscow")}
+)
 
 # ---------------------- Регистрация команд ----------------------
 application.add_handler(CommandHandler('start', start))
