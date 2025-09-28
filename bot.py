@@ -24,12 +24,12 @@ import datetime
 import re
 from zoneinfo import ZoneInfo
 
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-
 # Настройки для подключения к API и боту
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
 API_KEY = config('OPENWEATHERMAP_API_KEY')
 NASA_API_KEY = config('NASA_API_KEY')
+
+application = Application.builder().token(TELEGRAM_TOKEN).build()
 
 bot = Bot(token=TELEGRAM_TOKEN)
 application = Application.builder().token(TELEGRAM_TOKEN).build()
