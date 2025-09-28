@@ -23,6 +23,7 @@
     import datetime
     import re
     import pytz
+    from zoneinfo import ZoneInfo
 
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -34,7 +35,7 @@
     bot = Bot(token=TELEGRAM_TOKEN)
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     job_queue = application.job_queue
-    job_queue._scheduler.configure(timezone=pytz.timezone('Europe/Moscow'))
+    job_queue._scheduler.configure(timezone=ZoneInfo("Europe/Moscow"))
 
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
