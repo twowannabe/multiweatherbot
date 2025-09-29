@@ -234,15 +234,15 @@ async def send_solar_flare_forecast_to_all_users():
             logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
 # ---------------------- Планирование через JobQueue ----------------------
-job_queue.run_repeating(
+application.job_queue.run_repeating(
     check_water_temperature,
-    interval=60*60,  # каждые 60 минут
+    interval=60*60,
     first=0,
     name="water_check",
     job_kwargs={"tzinfo": ZoneInfo("Europe/Moscow")}
 )
 
-job_queue.run_repeating(
+application.job_queue.run_repeating(
     lambda ctx: asyncio.create_task(send_solar_flare_forecast_to_all_users()),
     interval=12*60*60,
     first=0,
