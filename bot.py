@@ -37,7 +37,7 @@ application = Application.builder().token(TELEGRAM_TOKEN).build()
 # Создаём JobQueue с таймзоной Europe/Moscow
 # job_queue = application.job_queue
 # application.job_queue = job_queue
-job_queue.start()
+# job_queue.start()
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
