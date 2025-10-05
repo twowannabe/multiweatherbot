@@ -7,8 +7,6 @@ from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 from bs4 import BeautifulSoup
 from html import escape
@@ -16,13 +14,16 @@ import asyncio
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import datetime
-import pytz  # ✅ используем pytz вместо zoneinfo
+import pytz
+import tzlocal
+from telegram.ext import JobQueue
 
 # ---------------------- Настройки ----------------------
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
 API_KEY = config('OPENWEATHERMAP_API_KEY')
 NASA_API_KEY = config('NASA_API_KEY')
 
+# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -30,9 +31,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+# ---------------------- Таймзона ----------------------
+# Подменяем tzlocal, чтобы apscheduler не вернул zoneinfo.ZoneInfo
+tzlocal.get_localzone = lambda: pytz.timezone("Europe/Moscow")
+moscow_tz = pytz.timezone("Europe/Moscow")
+
 # ---------------------- Приложение и JobQueue ----------------------
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-bot = Bot(token=TELEGRAM_TOKEN)
+job_queue = JobQueue(timezone=moscow_tz)
+application = Application.builder().token(TELEGRAM_TOKEN).job_queue(job_queue).build()
+bot = application.bot
 
 # ---------------------- Глобальные переменные ----------------------
 chat_location = {}
@@ -111,7 +118,10 @@ def get_forecast(lat, lon):
         response = requests.get(url)
         data = response.json()
         if response.status_code == 200:
-            forecast_data = [f"{entry['dt_txt']}: {entry['main']['temp']}°C, {entry['weather'][0]['description']}" for entry in data['list'][:4]]
+            forecast_data = [
+                f"{entry['dt_txt']}: {entry['main']['temp']}°C, {entry['weather'][0]['description']}"
+                for entry in data['list'][:4]
+            ]
             return forecast_data
         return None
     except Exception as e:
@@ -227,22 +237,18 @@ async def send_solar_flare_forecast_to_all_users():
             logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
 # ---------------------- Планирование через JobQueue ----------------------
-moscow_tz = pytz.timezone("Europe/Moscow")
-
 application.job_queue.run_repeating(
     check_water_temperature,
     interval=60*60,
     first=0,
-    name="water_check",
-    job_kwargs={"timezone": moscow_tz}  # ✅ pytz вместо ZoneInfo
+    name="water_check"
 )
 
 application.job_queue.run_repeating(
     lambda ctx: asyncio.create_task(send_solar_flare_forecast_to_all_users()),
     interval=12*60*60,
     first=0,
-    name="solar_check",
-    job_kwargs={"timezone": moscow_tz}  # ✅ pytz вместо ZoneInfo
+    name="solar_check"
 )
 
 # ---------------------- Регистрация команд ----------------------
