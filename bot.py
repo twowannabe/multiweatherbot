@@ -9,7 +9,6 @@ from telegram.ext import (
     ContextTypes,
     MessageHandler,
     filters,
-    JobQueue,
 )
 from bs4 import BeautifulSoup
 from html import escape
@@ -17,7 +16,7 @@ import asyncio
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import datetime
-from zoneinfo import ZoneInfo
+import pytz  # ✅ используем pytz вместо zoneinfo
 
 # ---------------------- Настройки ----------------------
 TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
@@ -33,12 +32,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ---------------------- Приложение и JobQueue ----------------------
 application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# Создаём JobQueue с таймзоной Europe/Moscow
-# job_queue = application.job_queue
-# application.job_queue = job_queue
-# job_queue.start()
-
 bot = Bot(token=TELEGRAM_TOKEN)
 
 # ---------------------- Глобальные переменные ----------------------
@@ -126,7 +119,7 @@ def get_forecast(lat, lon):
         return None
 
 # ---------------------- Проверка воды ----------------------
-def check_water_temperature():
+def check_water_temperature(context):
     global previous_temperature
     current_temperature = get_water_temperature()
     if current_temperature is not None:
@@ -134,7 +127,7 @@ def check_water_temperature():
             previous_temperature = current_temperature
         elif current_temperature < previous_temperature:
             message = f"Температура воды упала! Сейчас: {current_temperature}°C, ранее: {previous_temperature}°C."
-            job_queue.run_once(lambda ctx: asyncio.create_task(send_notification_to_all_users(message)), 0)
+            asyncio.create_task(send_notification_to_all_users(message))
         previous_temperature = current_temperature
 
 async def send_notification_to_all_users(message):
@@ -198,14 +191,14 @@ def get_solar_flare_activity():
         response.raise_for_status()
         data = response.json()
         flare_events = []
-        tz = ZoneInfo("Europe/Brussels")
+        tz = pytz.timezone("Europe/Moscow")
         for event in data:
             class_type = event.get('classType', 'неизвестный')
             begin_time = event.get('beginTime', 'неизвестное время')
             try:
                 dt = datetime.datetime.fromisoformat(begin_time.replace('Z', '+00:00'))
                 dt = dt.astimezone(tz)
-                time_str = dt.strftime('%d.%m.%Y %H:%M GMT+1')
+                time_str = dt.strftime('%d.%m.%Y %H:%M GMT+3')
             except Exception:
                 time_str = begin_time
             emoji = '⚪'
@@ -234,12 +227,14 @@ async def send_solar_flare_forecast_to_all_users():
             logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
 
 # ---------------------- Планирование через JobQueue ----------------------
+moscow_tz = pytz.timezone("Europe/Moscow")
+
 application.job_queue.run_repeating(
     check_water_temperature,
     interval=60*60,
     first=0,
     name="water_check",
-    job_kwargs={"tzinfo": ZoneInfo("Europe/Moscow")}
+    job_kwargs={"timezone": moscow_tz}  # ✅ pytz вместо ZoneInfo
 )
 
 application.job_queue.run_repeating(
@@ -247,7 +242,7 @@ application.job_queue.run_repeating(
     interval=12*60*60,
     first=0,
     name="solar_check",
-    job_kwargs={"tzinfo": ZoneInfo("Europe/Moscow")}
+    job_kwargs={"timezone": moscow_tz}  # ✅ pytz вместо ZoneInfo
 )
 
 # ---------------------- Регистрация команд ----------------------
@@ -259,6 +254,5 @@ application.add_handler(CommandHandler('solar', send_solar_flare_forecast))
 
 # ---------------------- Запуск бота ----------------------
 if __name__ == '__main__':
-    # Загружаем все сохранённые локации при старте
     chat_location = load_all_locations()
     application.run_polling()
