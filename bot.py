@@ -36,8 +36,8 @@ tzlocal.get_localzone = lambda: pytz.timezone("Europe/Moscow")
 moscow_tz = pytz.timezone("Europe/Moscow")
 
 # ---------------------- Приложение и JobQueue ----------------------
-job_queue = JobQueue(timezone=moscow_tz)
-application = Application.builder().token(TELEGRAM_TOKEN).job_queue(job_queue).build()
+application = Application.builder().token(TELEGRAM_TOKEN).build()
+job_queue = application.job_queue
 bot = application.bot
 
 # ---------------------- Глобальные переменные ----------------------
