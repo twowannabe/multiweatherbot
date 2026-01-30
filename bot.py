@@ -1,285 +1,311 @@
 import requests
 import re
 import logging
+import asyncio
+import datetime
+import pytz
+import tzlocal
+
 from decouple import config
-from telegram import Update, Bot
+from bs4 import BeautifulSoup
+from html import escape
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+from telegram import Update
+from telegram.error import RetryAfter
 from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
 )
-from bs4 import BeautifulSoup
-from html import escape
-import asyncio
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import datetime
-import pytz
-import tzlocal
-from telegram.ext import JobQueue
 
-# ---------------------- Настройки ----------------------
-TELEGRAM_TOKEN = config('TELEGRAM_TOKEN')
-API_KEY = config('OPENWEATHERMAP_API_KEY')
-NASA_API_KEY = config('NASA_API_KEY')
+# ====================== НАСТРОЙКИ ======================
+TELEGRAM_TOKEN = config("TELEGRAM_TOKEN")
+API_KEY = config("OPENWEATHERMAP_API_KEY")
+NASA_API_KEY = config("NASA_API_KEY")
 
-# ---------------------- Логирование ----------------------
+# ====================== ЛОГИ ======================
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# ---------------------- Таймзона ----------------------
+# ====================== TIMEZONE ======================
 tzlocal.get_localzone = lambda: pytz.timezone("Europe/Moscow")
-moscow_tz = pytz.timezone("Europe/Moscow")
+MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
-# ---------------------- Приложение и JobQueue ----------------------
+# ====================== APP ======================
 application = Application.builder().token(TELEGRAM_TOKEN).build()
-job_queue = application.job_queue
 bot = application.bot
 
-# ---------------------- Глобальные переменные ----------------------
+# ====================== ГЛОБАЛЬНЫЕ ======================
 chat_location = {}
 monitoring_chats = {}
-previous_temperature = None
+previous_water_temperature = None
 
-# ---------------------- Работа с базой ----------------------
+last_water_request = {}
+last_temp_request = {}
+
+# ====================== DB ======================
 def get_db_connection():
-    logger.info("Подключение к базе данных")
     return psycopg2.connect(
-        host=config('DB_HOST'),
-        port=config('DB_PORT'),
-        dbname=config('DB_NAME'),
-        user=config('DB_USER'),
-        password=config('DB_PASSWORD')
+        host=config("DB_HOST"),
+        port=config("DB_PORT"),
+        dbname=config("DB_NAME"),
+        user=config("DB_USER"),
+        password=config("DB_PASSWORD"),
     )
 
-def save_location_to_db(chat_id, lat, lon):
-    logger.info(f"Сохранение локации пользователя {chat_id}: {lat}, {lon}")
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO user_locations (chat_id, latitude, longitude) VALUES (%s, %s, %s) "
-        "ON CONFLICT (chat_id) DO UPDATE SET latitude = %s, longitude = %s",
-        (chat_id, lat, lon, lat, lon)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
 
 def load_all_locations():
-    logger.info("Загрузка всех локаций пользователей из базы данных")
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute("SELECT chat_id, latitude, longitude FROM user_locations")
-    locations = cursor.fetchall()
-    cursor.close()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT chat_id, latitude, longitude FROM user_locations")
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
-    return {row['chat_id']: (row['latitude'], row['longitude']) for row in locations}
+    return {r["chat_id"]: (r["latitude"], r["longitude"]) for r in rows}
 
-# ---------------------- Получение данных о погоде ----------------------
-def get_water_temperature():
-    url = 'https://world-weather.ru/pogoda/montenegro/budva/water/'
-    headers = {'User-Agent': 'Mozilla/5.0'}
+
+# ====================== SAFE SEND ======================
+async def safe_send_message(chat_id: int, text: str, **kwargs):
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-        temp_element = soup.find('div', id='weather-now-number')
-        if temp_element:
-            match = re.search(r'([-+]?\d+)', temp_element.get_text(strip=True))
-            if match:
-                return float(match.group(1))
-        return None
-    except requests.RequestException as e:
-        logger.error(f"Ошибка получения температуры воды: {e}")
-        return None
+        await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        await asyncio.sleep(1.2)
+    except RetryAfter as e:
+        logger.warning(f"Flood control, wait {e.retry_after}s")
+        await asyncio.sleep(e.retry_after + 1)
+        await safe_send_message(chat_id, text, **kwargs)
+    except Exception as e:
+        logger.error(f"Send error to {chat_id}: {e}")
+
+
+# ====================== WEATHER ======================
+def get_water_temperature():
+    url = "https://world-weather.ru/pogoda/montenegro/budva/water/"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.content, "html.parser")
+        el = soup.find("div", id="weather-now-number")
+        if el:
+            m = re.search(r"([-+]?\d+)", el.text)
+            if m:
+                return float(m.group(1))
+    except Exception as e:
+        logger.error(f"Water temp error: {e}")
+
+    return None
+
 
 def get_temperature(lat, lon):
-    url = f'http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
+    url = (
+        "https://api.openweathermap.org/data/2.5/weather"
+        f"?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru"
+    )
     try:
-        response = requests.get(url)
-        data = response.json()
-        if response.status_code == 200 and 'main' in data and 'temp' in data['main']:
-            return data['main']['temp']
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return data["main"]["temp"]
+    except Exception:
         return None
-    except Exception as e:
-        logger.error(f"Ошибка получения температуры воздуха: {e}")
-        return None
+
 
 def get_forecast(lat, lon):
-    url = f'http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru'
+    url = (
+        "https://api.openweathermap.org/data/2.5/forecast"
+        f"?lat={lat}&lon={lon}&appid={API_KEY}&units=metric&lang=ru"
+    )
     try:
-        response = requests.get(url)
-        data = response.json()
-        if response.status_code == 200:
-            forecast_data = [
-                f"{entry['dt_txt']}: {entry['main']['temp']}°C, {entry['weather'][0]['description']}"
-                for entry in data['list'][:4]
-            ]
-            return forecast_data
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return [
+            f"{e['dt_txt']}: {e['main']['temp']}°C, {e['weather'][0]['description']}"
+            for e in data["list"][:4]
+        ]
+    except Exception:
         return None
+
+
+# ====================== SOLAR ======================
+def get_solar_flare_activity():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    start = (now - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+
+    url = (
+        "https://api.nasa.gov/DONKI/FLR"
+        f"?startDate={start}&endDate={end}&api_key={NASA_API_KEY}"
+    )
+
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        lines = []
+        for e in data:
+            cls = e.get("classType", "?")
+            t = e.get("beginTime", "")
+            dt = datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(
+                MOSCOW_TZ
+            )
+            emoji = "🟢"
+            if cls.startswith("C"):
+                emoji = "🟡"
+            elif cls.startswith("M"):
+                emoji = "🟠"
+            elif cls.startswith("X"):
+                emoji = "🔴"
+
+            lines.append(
+                f"{emoji} {cls} — {dt.strftime('%d.%m.%Y %H:%M GMT+3')}"
+            )
+
+        return (
+            "*Солнечные вспышки за последние 3 дня:*\n" + "\n".join(lines)
+            if lines
+            else "Солнечных вспышек не было."
+        )
+
     except Exception as e:
-        logger.error(f"Ошибка получения прогноза: {e}")
-        return None
+        logger.error(f"Solar error: {e}")
+        return "Ошибка получения данных о солнечных вспышках."
 
-# ---------------------- Проверка воды ----------------------
-def check_water_temperature(context):
-    global previous_temperature
-    current_temperature = get_water_temperature()
-    if current_temperature is not None:
-        if previous_temperature is None:
-            previous_temperature = current_temperature
-        elif current_temperature < previous_temperature:
-            message = f"🌊 Температура воды упала! Сейчас: {current_temperature}°C, ранее: {previous_temperature}°C."
-            asyncio.create_task(send_notification_to_all_users(message))
-        previous_temperature = current_temperature
 
-async def send_notification_to_all_users(message):
-    for chat_id in monitoring_chats.keys():
-        try:
-            await bot.send_message(chat_id=chat_id, text=message)
-            logger.info(f"Уведомление отправлено пользователю {chat_id}")
-        except Exception as e:
-            logger.error(f"Не удалось отправить сообщение пользователю {chat_id}: {e}")
+# ====================== JOBS ======================
+async def check_water_temperature(context: ContextTypes.DEFAULT_TYPE):
+    global previous_water_temperature
 
-# ---------------------- Команды бота ----------------------
+    current = get_water_temperature()
+    if current is None:
+        return
+
+    if previous_water_temperature is not None and current < previous_water_temperature:
+        msg = (
+            f"🌊 Температура воды упала!\n"
+            f"Было: {previous_water_temperature}°C\n"
+            f"Стало: {current}°C"
+        )
+        for chat_id in monitoring_chats:
+            await safe_send_message(chat_id, msg)
+
+    previous_water_temperature = current
+
+
+async def send_solar_flare_forecast_to_all_users(
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    msg = get_solar_flare_activity()
+    for chat_id in monitoring_chats:
+        await safe_send_message(chat_id, msg, parse_mode="Markdown")
+
+
+# ====================== COMMANDS ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    logger.info(f"Получена команда /start от пользователя {chat_id}")
-    try:
-        if update.message:
-            await update.message.reply_text(
-                "Бот запущен! 🧙‍♀️\nПожалуйста, отправьте свою локацию для получения прогноза погоды."
-            )
-        else:
-            logger.warning("update.message == None при выполнении /start")
+    monitoring_chats[chat_id] = True
+    await update.message.reply_text(
+        "🧙‍♀️ Бот запущен!\nОтправь локацию для прогноза погоды."
+    )
 
-        if chat_id not in monitoring_chats:
-            monitoring_chats[chat_id] = None
-            logger.info(f"Пользователь {chat_id} добавлен в monitoring_chats")
 
-    except Exception as e:
-        logger.error(f"Ошибка в команде /start: {e}", exc_info=True)
+async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    now = datetime.datetime.utcnow().timestamp()
+
+    if chat_id in last_water_request and now - last_water_request[chat_id] < 30:
+        return
+
+    last_water_request[chat_id] = now
+
+    t = get_water_temperature()
+    if t is None:
+        await update.message.reply_text("Не удалось получить температуру воды.")
+    else:
+        await update.message.reply_text(f"🌊 Температура воды в Будве: {t}°C")
+
 
 async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    if chat_id in chat_location:
-        lat, lon = chat_location[chat_id]
-        t = get_temperature(lat, lon)
-        if t is not None:
-            await update.message.reply_text(f"Текущая температура воздуха: {t}°C")
-        else:
-            await update.message.reply_text("Не удалось получить данные о температуре.")
-    else:
-        await update.message.reply_text("Сначала отправьте вашу локацию.")
+    now = datetime.datetime.utcnow().timestamp()
 
-async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    t = get_water_temperature()
-    if t is not None:
-        await update.message.reply_text(f"🌊 Температура воды в Будве: {t}°C")
-    else:
-        await update.message.reply_text("Не удалось получить данные о температуре воды.")
+    if chat_id in last_temp_request and now - last_temp_request[chat_id] < 15:
+        return
 
-async def send_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    last_temp_request[chat_id] = now
+
+    if chat_id not in chat_location:
+        await update.message.reply_text("Сначала отправь локацию.")
+        return
+
+    lat, lon = chat_location[chat_id]
+    t = get_temperature(lat, lon)
+    await update.message.reply_text(
+        f"🌡 Температура воздуха: {t}°C" if t else "Ошибка получения данных."
+    )
+
+
+async def forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    if chat_id in chat_location:
-        lat, lon = chat_location[chat_id]
-        temp_val = get_temperature(lat, lon)
-        forecast_data = get_forecast(lat, lon)
-        if forecast_data:
-            forecast = "\n".join(forecast_data)
-            message = f"Текущая температура воздуха: {temp_val}°C\n\n{forecast}"
-            await update.message.reply_text(escape(message), parse_mode="HTML")
-        else:
-            await update.message.reply_text("Не удалось получить прогноз погоды.")
-    else:
-        await update.message.reply_text("Сначала отправьте вашу локацию.")
+    if chat_id not in chat_location:
+        await update.message.reply_text("Сначала отправь локацию.")
+        return
 
-# ---------------------- Солнечные вспышки ----------------------
-def get_solar_flare_activity():
-    now = datetime.datetime.now(datetime.timezone.utc)
-    three_days_ago = (now - datetime.timedelta(days=2)).strftime('%Y-%m-%d')
-    today = now.strftime('%Y-%m-%d')
-    url = f"https://api.nasa.gov/DONKI/FLR?startDate={three_days_ago}&endDate={today}&api_key={NASA_API_KEY}"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        flare_events = []
-        tz = pytz.timezone("Europe/Moscow")
-        for event in data:
-            class_type = event.get('classType', 'неизвестный')
-            begin_time = event.get('beginTime', 'неизвестное время')
-            try:
-                dt = datetime.datetime.fromisoformat(begin_time.replace('Z', '+00:00'))
-                dt = dt.astimezone(tz)
-                time_str = dt.strftime('%d.%m.%Y %H:%M GMT+3')
-            except Exception:
-                time_str = begin_time
-            emoji = '⚪'
-            if class_type.startswith('A') or class_type.startswith('B'): emoji = '🟢'
-            elif class_type.startswith('C'): emoji = '🟡'
-            elif class_type.startswith('M'): emoji = '🟠'
-            elif class_type.startswith('X'): emoji = '🔴'
-            flare_events.append(f"{emoji} Вспышка класса {class_type} произошла в {time_str}")
-        if flare_events:
-            return "*Солнечные вспышки за последние 3 дня:*\n" + "\n".join(flare_events)
-        return "Солнечных вспышек за последние 3 дня не зафиксировано."
-    except Exception as e:
-        logger.error(f"Ошибка получения данных о солнечных вспышках: {e}")
-        return "Ошибка получения данных о солнечных вспышках."
+    lat, lon = chat_location[chat_id]
+    t = get_temperature(lat, lon)
+    f = get_forecast(lat, lon)
 
-async def send_solar_flare_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = get_solar_flare_activity()
-    await update.message.reply_text(message, parse_mode="Markdown")
+    if not f:
+        await update.message.reply_text("Прогноз недоступен.")
+        return
 
-async def send_solar_flare_forecast_to_all_users():
-    message = get_solar_flare_activity()
-    for chat_id in monitoring_chats.keys():
-        try:
-            await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Ошибка при рассылке солнечных вспышек пользователю {chat_id}: {e}")
+    msg = f"Сейчас: {t}°C\n\n" + "\n".join(f)
+    await update.message.reply_text(escape(msg), parse_mode="HTML")
 
-# ---------------------- Планировщик ----------------------
-application.job_queue.run_repeating(
-    check_water_temperature,
-    interval=60*60,
-    first=0,
-    name="water_check"
-)
 
-application.job_queue.run_repeating(
-    lambda ctx: asyncio.create_task(send_solar_flare_forecast_to_all_users()),
-    interval=12*60*60,
-    first=0,
-    name="solar_check"
-)
+async def solar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = get_solar_flare_activity()
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
-# ---------------------- Обработчик ошибок ----------------------
+
+# ====================== ERROR ======================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Произошла ошибка: {context.error}", exc_info=True)
-    if update and hasattr(update, "message") and update.message:
-        try:
-            await update.message.reply_text("⚠️ Произошла внутренняя ошибка. Разработчик уже уведомлен.")
-        except Exception:
-            pass
+    logger.error("Unhandled error", exc_info=context.error)
 
+
+# ====================== REGISTRATION ======================
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("water", water))
+application.add_handler(CommandHandler("temp", temp))
+application.add_handler(CommandHandler("forecast", forecast))
+application.add_handler(CommandHandler("solar", solar))
 application.add_error_handler(error_handler)
 
-# ---------------------- Регистрация команд ----------------------
-application.add_handler(CommandHandler('start', start))
-application.add_handler(CommandHandler('temp', temp))
-application.add_handler(CommandHandler('water', water))
-application.add_handler(CommandHandler('forecast', send_forecast))
-application.add_handler(CommandHandler('solar', send_solar_flare_forecast))
+# ====================== JOB QUEUE ======================
+application.job_queue.run_repeating(
+    check_water_temperature,
+    interval=3600,
+    first=300,
+    name="water_check",
+)
 
-# ---------------------- Запуск ----------------------
-if __name__ == '__main__':
-    logger.info("🚀 Запуск multiweatherbot...")
+application.job_queue.run_repeating(
+    send_solar_flare_forecast_to_all_users,
+    interval=43200,
+    first=600,
+    name="solar_check",
+)
+
+# ====================== START ======================
+if __name__ == "__main__":
+    logger.info("🚀 Starting multiweatherbot")
     chat_location = load_all_locations()
-    logger.info(f"Загружено {len(chat_location)} локаций пользователей из базы.")
+    logger.info(f"Loaded {len(chat_location)} locations")
     application.run_polling()
