@@ -6,3 +6,6 @@ beautifulsoup4
 openai
 html5lib
 aiohttp
+pytz
+tzlocal
+psycopg2-binary
