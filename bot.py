@@ -20,6 +20,8 @@ from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 # ====================== НАСТРОЙКИ ======================
@@ -71,6 +73,20 @@ def load_all_locations():
     cur.close()
     conn.close()
     return {r["chat_id"]: (r["latitude"], r["longitude"]) for r in rows}
+
+
+def save_location(chat_id: int, lat: float, lon: float):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO user_locations (chat_id, latitude, longitude)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (chat_id) DO UPDATE
+            SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
+    """, (chat_id, lat, lon))
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
 def init_water_log_db():
@@ -264,10 +280,14 @@ async def check_water_temperature(context: ContextTypes.DEFAULT_TYPE):
     log_water_temperature(current)
 
     if previous_water_temperature is not None and current < previous_water_temperature:
-        msg = (
+        drop = round(previous_water_temperature - current, 1)
+        prompt = (
+            f"Температура воды в Будве упала с {previous_water_temperature}°C до {current}°C "
+            f"(на {drop}°C). Напиши короткое уведомление на русском — живо и по делу, 1–2 предложения."
+        )
+        msg = grok_ask(prompt) or (
             f"🌊 Температура воды упала!\n"
-            f"Было: {previous_water_temperature}°C\n"
-            f"Стало: {current}°C"
+            f"Было: {previous_water_temperature}°C\nСтало: {current}°C"
         )
         for chat_id in monitoring_chats:
             await safe_send_message(chat_id, msg)
@@ -413,6 +433,44 @@ async def solar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(explanation)
 
 
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    loc = update.message.location
+    lat, lon = loc.latitude, loc.longitude
+    chat_location[chat_id] = (lat, lon)
+    save_location(chat_id, lat, lon)
+    await update.message.reply_text("📍 Локация сохранена! Теперь доступны /temp, /forecast, /advice.")
+
+
+async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    question = " ".join(context.args)
+    if not question:
+        await update.message.reply_text("Использование: /ask <вопрос>")
+        return
+
+    parts = []
+    water = get_water_temperature()
+    if water is not None:
+        parts.append(f"Температура воды: {water}°C")
+    if chat_id in chat_location:
+        lat, lon = chat_location[chat_id]
+        air = get_temperature(lat, lon)
+        f = get_forecast(lat, lon)
+        if air is not None:
+            parts.append(f"Температура воздуха: {air}°C")
+        if f:
+            parts.append("Прогноз:\n" + "\n".join(f))
+
+    context_str = (
+        "Текущая погода в Будве, Черногория:\n" + "\n".join(parts) + "\n\n"
+        if parts else ""
+    )
+    prompt = f"{context_str}Вопрос: {question}\n\nОтветь кратко на русском."
+    answer = grok_ask(prompt) or "Не удалось получить ответ."
+    await update.message.reply_text(answer)
+
+
 # ====================== ERROR ======================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Unhandled error", exc_info=context.error)
@@ -426,6 +484,8 @@ application.add_handler(CommandHandler("forecast", forecast))
 application.add_handler(CommandHandler("advice", advice))
 application.add_handler(CommandHandler("trend", trend))
 application.add_handler(CommandHandler("solar", solar))
+application.add_handler(CommandHandler("ask", ask))
+application.add_handler(MessageHandler(filters.LOCATION, handle_location))
 application.add_error_handler(error_handler)
 
 
