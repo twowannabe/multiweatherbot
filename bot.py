@@ -288,6 +288,94 @@ application.add_handler(CommandHandler("forecast", forecast))
 application.add_handler(CommandHandler("solar", solar))
 application.add_error_handler(error_handler)
 
+# ====================== PUSH ALERTS ======================
+# New table: user_alerts (chat_id, type='rain'|'snow'|'storm'|'hot', threshold float)
+def init_alerts_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_alerts (
+            chat_id BIGINT PRIMARY KEY,
+            alert_type TEXT NOT NULL,
+            threshold REAL NOT NULL
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+async def alert_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text("/alert <type> <threshold>\ntypes: rain(mm/3h), snow(mm), pop(%%), hot(°C)")
+        return
+    alert_type = args[0].lower()
+    try:
+        threshold = float(args[1])
+    except:
+        await update.message.reply_text("Threshold must be number.")
+        return
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT OR REPLACE INTO user_alerts (chat_id, alert_type, threshold) VALUES (%s, %s, %s)",
+                (chat_id, alert_type, threshold))
+    conn.commit()
+    cur.close()
+    conn.close()
+    await update.message.reply_text(f"✅ Alert {alert_type} > {threshold} added.")
+
+async def alert_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT alert_type, threshold FROM user_alerts WHERE chat_id=%s", (chat_id,))
+    alerts = cur.fetchall()
+    cur.close()
+    conn.close()
+    if not alerts:
+        await update.message.reply_text("No alerts.")
+        return
+    msg = "Alerts:\n" + "\n".join([f"{t}: >{th}" for t, th in alerts])
+    await update.message.reply_text(msg)
+
+async def alert_checker(context: ContextTypes.DEFAULT_TYPE):
+    """Check forecasts for alerts every 30min."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT chat_id, latitude, longitude FROM user_locations")
+    locations = cur.fetchall()
+    cur.execute("SELECT chat_id, alert_type, threshold FROM user_alerts")
+    alerts_dict = {r[0]: [(r[1], r[2])] for r in cur.fetchall()}
+    cur.close()
+    conn.close()
+    for loc in locations:
+        chat_id, lat, lon = loc
+        if chat_id not in alerts_dict:
+            continue
+        alerts = alerts_dict[chat_id]
+        forecast = get_forecast(lat, lon)  # reuse, parse for rain/snow/pop/temp
+        # Parse forecast (dummy: assume get_alert_forecast returns triggers)
+        triggers = []  # e.g. if 'rain:2.5' > threshold
+        for a_type, th in alerts:
+            if a_type == 'rain' and forecast_rain > th:
+                triggers.append(f"🌧️ Дождь {forecast_rain}mm!")
+        if triggers:
+            msg = "⚠️ Alerts:\n" + "\n".join(triggers)
+            await safe_send_message(chat_id, msg)
+
+application.add_handler(CommandHandler("alert", alert_handler))
+application.add_handler(CommandHandler("alertlist", alert_list))
+
+init_alerts_db()  # Call once
+
+application.job_queue.run_repeating(
+    alert_checker,
+    interval=1800,  # 30min
+    first=300,
+    name="alerts",
+)
+
 # ====================== JOB QUEUE ======================
 application.job_queue.run_repeating(
     check_water_temperature,
