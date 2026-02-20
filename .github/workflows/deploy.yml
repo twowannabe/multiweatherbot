@@ -1,0 +1,23 @@
+name: Deploy to server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 188.166.105.108
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd /root/repos/multiweatherbot
+            git pull origin main
+            /root/weatherbot/bin/pip install -r requirements.txt
+            systemctl restart multiweatherbot
