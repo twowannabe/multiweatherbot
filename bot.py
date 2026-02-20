@@ -26,6 +26,7 @@ from telegram.ext import (
 TELEGRAM_TOKEN = config("TELEGRAM_TOKEN")
 API_KEY = config("OPENWEATHERMAP_API_KEY")
 NASA_API_KEY = config("NASA_API_KEY")
+GROK_API_KEY = config("GROK_API_KEY")
 
 # ====================== ЛОГИ ======================
 logging.basicConfig(
@@ -133,6 +134,29 @@ def get_forecast(lat, lon):
             for e in data["list"][:4]
         ]
     except Exception:
+        return None
+
+
+# ====================== GROK ======================
+def grok_ask(prompt: str) -> str | None:
+    try:
+        r = requests.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROK_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "grok-2-latest",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"Grok error: {e}")
         return None
 
 
@@ -262,13 +286,59 @@ async def forecast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Прогноз недоступен.")
         return
 
-    msg = f"Сейчас: {t}°C\n\n" + "\n".join(f)
-    await update.message.reply_text(escape(msg), parse_mode="HTML")
+    raw = f"Сейчас: {t}°C\n" + "\n".join(f)
+    prompt = (
+        f"Вот прогноз погоды в Будве, Черногория:\n{raw}\n\n"
+        "Напиши краткое человекочитаемое резюме на русском (2–3 предложения). "
+        "Только суть, без лишних деталей."
+    )
+    summary = grok_ask(prompt)
+    await update.message.reply_text(summary if summary else raw)
+
+
+async def advice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id not in chat_location:
+        await update.message.reply_text("Сначала отправь локацию.")
+        return
+
+    lat, lon = chat_location[chat_id]
+    water = get_water_temperature()
+    air = get_temperature(lat, lon)
+    f = get_forecast(lat, lon)
+
+    parts = []
+    if water is not None:
+        parts.append(f"Температура воды: {water}°C")
+    if air is not None:
+        parts.append(f"Температура воздуха: {air}°C")
+    if f:
+        parts.append("Прогноз:\n" + "\n".join(f))
+
+    if not parts:
+        await update.message.reply_text("Не удалось получить данные о погоде.")
+        return
+
+    prompt = (
+        "Погода в Будве, Черногория:\n" + "\n".join(parts) + "\n\n"
+        "Дай краткий совет: стоит ли купаться, что надеть, чем заняться на улице. "
+        "2–3 предложения на русском."
+    )
+    msg = grok_ask(prompt) or "Не удалось получить совет."
+    await update.message.reply_text(msg)
 
 
 async def solar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = get_solar_flare_activity()
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    raw = get_solar_flare_activity()
+    await update.message.reply_text(raw, parse_mode="Markdown")
+    prompt = (
+        f"{raw}\n\n"
+        "Объясни простым языком на русском: что это означает, есть ли влияние на людей "
+        "и стоит ли беспокоиться. 2–3 предложения."
+    )
+    explanation = grok_ask(prompt)
+    if explanation:
+        await update.message.reply_text(explanation)
 
 
 # ====================== ERROR ======================
@@ -281,6 +351,7 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("water", water))
 application.add_handler(CommandHandler("temp", temp))
 application.add_handler(CommandHandler("forecast", forecast))
+application.add_handler(CommandHandler("advice", advice))
 application.add_handler(CommandHandler("solar", solar))
 application.add_error_handler(error_handler)
 
