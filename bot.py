@@ -73,6 +73,53 @@ def load_all_locations():
     return {r["chat_id"]: (r["latitude"], r["longitude"]) for r in rows}
 
 
+def init_water_log_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS water_temperature_log (
+            id SERIAL PRIMARY KEY,
+            temperature REAL NOT NULL,
+            recorded_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def log_water_temperature(temp: float):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO water_temperature_log (temperature) VALUES (%s)",
+        (temp,),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_water_temperature_history(days: int = 7):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT
+            DATE(recorded_at AT TIME ZONE 'Europe/Moscow') AS day,
+            ROUND(AVG(temperature)::numeric, 1) AS avg_temp,
+            MIN(temperature) AS min_temp,
+            MAX(temperature) AS max_temp
+        FROM water_temperature_log
+        WHERE recorded_at > NOW() - INTERVAL '%s days'
+        GROUP BY day
+        ORDER BY day
+    """, (days,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
 # ====================== SAFE SEND ======================
 async def safe_send_message(chat_id: int, text: str, **kwargs):
     while True:
@@ -214,6 +261,8 @@ async def check_water_temperature(context: ContextTypes.DEFAULT_TYPE):
     if current is None:
         return
 
+    log_water_temperature(current)
+
     if previous_water_temperature is not None and current < previous_water_temperature:
         msg = (
             f"🌊 Температура воды упала!\n"
@@ -328,6 +377,29 @@ async def advice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 
+async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = get_water_temperature_history(days=7)
+    if not rows:
+        await update.message.reply_text("Данных пока нет — история накапливается раз в час.")
+        return
+
+    lines = [
+        f"{r['day']}: avg {r['avg_temp']}°C, min {r['min_temp']}°C, max {r['max_temp']}°C"
+        for r in rows
+    ]
+    data = "\n".join(lines)
+    prompt = (
+        f"Температура воды в Будве, Черногория за последние 7 дней:\n{data}\n\n"
+        "Проанализируй тренд: теплеет или холодает, на сколько изменилась за неделю, "
+        "есть ли резкие скачки. 2–3 предложения на русском."
+    )
+    analysis = grok_ask(prompt)
+    msg = f"📊 История температуры воды:\n{data}"
+    if analysis:
+        msg += f"\n\n{analysis}"
+    await update.message.reply_text(msg)
+
+
 async def solar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = get_solar_flare_activity()
     await update.message.reply_text(raw, parse_mode="Markdown")
@@ -352,6 +424,7 @@ application.add_handler(CommandHandler("water", water))
 application.add_handler(CommandHandler("temp", temp))
 application.add_handler(CommandHandler("forecast", forecast))
 application.add_handler(CommandHandler("advice", advice))
+application.add_handler(CommandHandler("trend", trend))
 application.add_handler(CommandHandler("solar", solar))
 application.add_error_handler(error_handler)
 
@@ -368,6 +441,7 @@ application.job_queue.run_repeating(
 # ====================== START ======================
 if __name__ == "__main__":
     logger.info("🚀 Starting multiweatherbot")
+    init_water_log_db()
     chat_location = load_all_locations()
     logger.info(f"Loaded {len(chat_location)} locations")
     application.run_polling()
