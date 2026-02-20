@@ -1,6 +1,6 @@
 requests
 schedule
-python-telegram-bot
+python-telegram-bot[job-queue]
 python-decouple
 beautifulsoup4
 openai
