@@ -40,7 +40,7 @@ tzlocal.get_localzone = lambda: pytz.timezone("Europe/Moscow")
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
 # ====================== APP ======================
-application = Application.builder().token(TELEGRAM_TOKEN).rate_limiter(AIORateLimiter()).build()
+application = Application.builder().token(TELEGRAM_TOKEN).rate_limiter(AIORateLimiter(max_retries=3)).build()
 bot = application.bot
 
 # ====================== ГЛОБАЛЬНЫЕ ======================
@@ -221,7 +221,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    now = datetime.datetime.utcnow().timestamp()
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
 
     if chat_id in last_water_request and now - last_water_request[chat_id] < 30:
         return
@@ -237,7 +237,7 @@ async def water(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    now = datetime.datetime.utcnow().timestamp()
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
 
     if chat_id in last_temp_request and now - last_temp_request[chat_id] < 15:
         return
