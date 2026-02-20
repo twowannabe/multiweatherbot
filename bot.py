@@ -16,6 +16,7 @@ from psycopg2.extras import RealDictCursor
 from telegram import Update
 from telegram.error import RetryAfter
 from telegram.ext import (
+    AIORateLimiter,
     Application,
     CommandHandler,
     ContextTypes,
@@ -39,7 +40,7 @@ tzlocal.get_localzone = lambda: pytz.timezone("Europe/Moscow")
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
 # ====================== APP ======================
-application = Application.builder().token(TELEGRAM_TOKEN).build()
+application = Application.builder().token(TELEGRAM_TOKEN).rate_limiter(AIORateLimiter()).build()
 bot = application.bot
 
 # ====================== ГЛОБАЛЬНЫЕ ======================
@@ -73,15 +74,17 @@ def load_all_locations():
 
 # ====================== SAFE SEND ======================
 async def safe_send_message(chat_id: int, text: str, **kwargs):
-    try:
-        await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-        await asyncio.sleep(1.2)
-    except RetryAfter as e:
-        logger.warning(f"Flood control, wait {e.retry_after}s")
-        await asyncio.sleep(e.retry_after + 1)
-        await safe_send_message(chat_id, text, **kwargs)
-    except Exception as e:
-        logger.error(f"Send error to {chat_id}: {e}")
+    while True:
+        try:
+            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+            await asyncio.sleep(1.2)
+            return
+        except RetryAfter as e:
+            logger.warning(f"Flood control, wait {e.retry_after}s")
+            await asyncio.sleep(e.retry_after + 1)
+        except Exception as e:
+            logger.error(f"Send error to {chat_id}: {e}")
+            return
 
 
 # ====================== WEATHER ======================
